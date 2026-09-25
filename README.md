@@ -41,7 +41,7 @@ Examples below use `trailmix` on your PATH.
 
 ## Meeting workspace
 
-Requires tmux, Neovim 0.11+, and Alacritty when there is no attached tmux client. Aerospace provides exact terminal focus. TrailMix checks PATH, `/opt/homebrew/bin`, `/usr/local/bin`, and the Alacritty app executable directory. Use an absolute TrailMix executable path in external hotkeys.
+Requires tmux and Neovim 0.11+. When no tmux client is attached, TrailMix opens a terminal with the configured `terminal.command`, which defaults to Terminal.app. TrailMix checks PATH, `/opt/homebrew/bin`, and `/usr/local/bin` for executables. Use an absolute TrailMix executable path in external hotkeys.
 
 ```sh
 trailmix start    # New note, hosted transcription, tmux + Neovim, terminal focus
@@ -55,7 +55,7 @@ Recordings stop automatically after 3 hours, so a forgotten session cannot run o
 
 Notes default to `~/Documents/TrailMix/YYYY-MM-DD/HH-MM-SS.md` in local time. Collisions get a numeric suffix. Each daily `trailmix-YYYY-MM-DD` tmux session has one window per meeting, starting in the daily notes directory. Original dates and paths survive midnight and recorder restart. `open` recreates closed targets and restores the note if its Neovim window switched to another buffer, preserving unsaved text there.
 
-TrailMix prefers the invoking tmux client's best available identity, captured before recorder startup, then the most recently active eligible attached client. When several clients share a pane, tmux cannot identify the invoking client from `TMUX_PANE` alone. A tmux binding can supply `TRAILMIX_TMUX_CLIENT` using `#{client_name}` to make that choice explicit. From an external hotkey, leave it unset. With no attached client, TrailMix launches Alacritty and waits for it to attach. Exact focus uses process ancestry and Aerospace window IDs; ambiguous matches report an error rather than focusing a guessed window. This slice uses the invoking tmux server or the default server from an external hotkey.
+TrailMix prefers the invoking tmux client's best available identity, captured before recorder startup, then the most recently active eligible attached client. When several clients share a pane, tmux cannot identify the invoking client from `TMUX_PANE` alone. A tmux binding can supply `TRAILMIX_TMUX_CLIENT` using `#{client_name}` to make that choice explicit. From an external hotkey, leave it unset. With no attached client, TrailMix runs the terminal command and waits for a client to attach. This slice uses the invoking tmux server or the default server from an external hotkey.
 
 ### Recording indicator in tmux
 
@@ -69,6 +69,26 @@ set -g status-right-length 60
 `trailmix status --tmux` prints `● HH:MM` with the start time, `○ …` while starting, and a yellow `!txt` when live transcription is degraded. It prints nothing when idle. The command only runs while the option is set. If the recorder dies without clearing the option, the next status-line refresh clears it. The option is harmless if your status line never reads it. Use an absolute path; tmux jobs may not share your shell's PATH.
 
 macOS also shows its own orange microphone indicator in the menu bar while any app, including TrailMix, uses the microphone.
+
+### Terminal and focus
+
+`terminal.command` is an executable/argument array, never a shell string. `{tmux}`, `{target}`, and `{dir}` are replaced with the tmux executable, the attach target, and the note's directory. The default opens a Terminal.app window through `osascript`. Other terminals:
+
+```sh
+trailmix config set terminal.command '["alacritty", "--working-directory", "{dir}", "-e", "{tmux}", "attach-session", "-t", "{target}"]'
+trailmix config set terminal.command '["kitty", "--directory", "{dir}", "{tmux}", "attach-session", "-t", "{target}"]'
+trailmix config set terminal.command '["wezterm", "start", "--cwd", "{dir}", "--", "{tmux}", "attach-session", "-t", "{target}"]'
+trailmix config set terminal.command '["open", "-na", "Ghostty", "--args", "-e", "{tmux}", "attach-session", "-t", "{target}"]'
+```
+
+After selecting the note, TrailMix brings forward the terminal hosting that tmux client, found through its process ancestry. `terminal.focus` chooses how:
+
+| Value | Behavior |
+| --- | --- |
+| `auto` | Default. Aerospace when installed, otherwise `macos`. Falls back to `macos` when Aerospace cannot identify one exact window. |
+| `aerospace` | Focus the terminal's exact Aerospace window, across workspaces. Ambiguous matches report an error rather than focusing a guessed window. |
+| `macos` | Activate the terminal app. macOS raises that app's frontmost window, which may not be the meeting's window. |
+| `none` | Select the note in tmux and leave focus alone. |
 
 ### Settings and templates
 
@@ -108,9 +128,9 @@ return {
 
 Only one insertion request can be pending. Moving the cursor, editing, leaving the buffer/window, or changing the meeting ID cancels that request. Calls time out after four seconds. Closing and reopening Neovim works because the note carries its identity.
 
-TrailMix launches Neovim with a private local control socket for `open`. The plugin supplies timestamp editing, transcript inspection, and meeting questions. No Neovim lifecycle command is needed. Your editor configuration and Aerospace bindings are installed by you; this checkout does not modify them.
+TrailMix launches Neovim with a private local control socket for `open`. The plugin supplies timestamp editing, transcript inspection, and meeting questions. No Neovim lifecycle command is needed. Your editor configuration and hotkeys are installed by you; this checkout does not modify them.
 
-For an Aerospace binding, point your chosen key at `exec-and-forget /absolute/path/to/trailmix toggle` (for example `~/.local/bin/trailmix`, expanded). Choose the key yourself. `stop` and the stopping half of `toggle` do not navigate or focus any window.
+For a global hotkey, point any launcher (Aerospace `exec-and-forget`, skhd, Raycast, Hammerspoon) at `/absolute/path/to/trailmix toggle`, for example `~/.local/bin/trailmix`, expanded. Choose the key yourself. `stop` and the stopping half of `toggle` do not navigate or focus any window.
 
 ### Transcript split
 
@@ -413,7 +433,7 @@ The Swift self-test writes and reads real synthetic PCM buffers, including 16-bi
 - `internal/recorder/`: CLI lifecycle, tmux recording indicator, unique meeting notes and associations, detached recorder, Unix-socket control, and native process supervision.
 - `internal/meeting/`: recorder-owned identity, legacy ID preservation, and atomic JSON persistence.
 - `internal/settings/`: XDG workspace preferences and CLI configuration.
-- `internal/navigation/`: tmux targets, Neovim buffer restoration, Alacritty launch, and exact Aerospace focus.
+- `internal/navigation/`: tmux targets, Neovim buffer restoration, configured terminal launch, and Aerospace or app focus.
 - `lua/trailmix/`: Neovim companion plugin.
 - `tests/nvim/`: isolated headless Neovim checks.
 - `native/Capture.swift`: ScreenCaptureKit microphone/system capture, PCM files, and timing journals.

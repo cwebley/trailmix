@@ -54,3 +54,20 @@ func TestSettingsUseXDGAndNormalizeInvocationPaths(t *testing.T) {
 		t.Fatalf("settings permissions: %v %v", info, err)
 	}
 }
+
+func TestTerminalValidation(t *testing.T) {
+	valid := settings.Terminal{Command: settings.DefaultTerminalCommand, Focus: "auto"}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, bad := range map[string]settings.Terminal{
+		"empty command":  {Focus: "auto"},
+		"relative path":  {Command: []string{"bin/alacritty"}, Focus: "auto"},
+		"unknown focus":  {Command: []string{"alacritty"}, Focus: "yabai"},
+		"NUL in command": {Command: []string{"alacritty", "a\x00b"}, Focus: "none"},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Errorf("%s: accepted %+v", name, bad)
+		}
+	}
+}

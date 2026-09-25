@@ -1,5 +1,6 @@
-// Package navigation opens meeting notes through tmux and brings their terminal
-// forward only when process ancestry identifies one exact Aerospace window.
+// Package navigation opens meeting notes through tmux, launches a configured
+// terminal when no client is attached, and brings that client's terminal
+// forward. Focus follows the tmux client's process ancestry to its terminal.
 package navigation
 
 import (
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/cwebley/trailmix/internal/settings"
 )
 
 type Target struct {
@@ -27,8 +30,12 @@ type Target struct {
 }
 
 type Navigator struct {
-	tmux, nvim, alacritty, aerospace, home string
-	preferred                              *client
+	tmux, nvim, home string
+	terminal         []string // Launch command with placeholders.
+	focusMode        string   // aerospace, macos, or none.
+	focusFallback    bool     // auto: try app activation when Aerospace cannot.
+	aerospace        string
+	preferred        *client
 }
 
 // Hotkeys need not inherit an interactive shell's Homebrew PATH.
@@ -57,8 +64,11 @@ func run(program string, args ...string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func Preflight(home string) (*Navigator, error) {
-	n := &Navigator{home: home}
+func Preflight(home string, terminal settings.Terminal) (*Navigator, error) {
+	if err := terminal.Validate(); err != nil {
+		return nil, err
+	}
+	n := &Navigator{home: home, focusMode: terminal.Focus}
 	if len(filepath.Join(home, "e-0123456789abcdef.sock")) >= 104 {
 		return nil, errors.New("editor socket path is too long; set TRAILMIX_HOME to a shorter absolute path")
 	}
@@ -86,13 +96,20 @@ func Preflight(home string) (*Navigator, error) {
 			break
 		}
 	}
+	n.terminal = terminal.Command
 	if len(clients) == 0 {
-		n.alacritty, err = executable("alacritty")
-		if err != nil {
-			return nil, err
+		if _, err := executable(n.terminal[0]); err != nil {
+			return nil, fmt.Errorf("terminal.command: %w", err)
 		}
 	}
-	n.aerospace, _ = executable("aerospace") // Missing focus support must not stop capture.
+	// Missing focus support must not stop capture; focus reports it later.
+	n.aerospace, _ = executable("aerospace")
+	if n.focusMode == "auto" {
+		n.focusMode, n.focusFallback = "macos", true
+		if n.aerospace != "" {
+			n.focusMode = "aerospace"
+		}
+	}
 	return n, nil
 }
 
@@ -156,18 +173,21 @@ func (n *Navigator) Open(note Target) error {
 		}
 		return n.focus(c.pid, false)
 	}
-	if n.alacritty == "" {
-		n.alacritty, err = executable("alacritty")
-		if err != nil {
-			return err
-		}
+	program, err := executable(n.terminal[0])
+	if err != nil {
+		return fmt.Errorf("terminal.command: %w", err)
 	}
 	log, err := os.CreateTemp(n.home, "terminal-*.log")
 	if err != nil {
 		return err
 	}
 	defer log.Close()
-	cmd := exec.Command(n.alacritty, "--working-directory", filepath.Dir(note.Path), "--title", "TrailMix "+note.Date, "-e", n.tmux, "attach-session", "-t", target)
+	replacer := strings.NewReplacer("{tmux}", n.tmux, "{target}", target, "{dir}", filepath.Dir(note.Path))
+	args := make([]string, len(n.terminal)-1)
+	for i, arg := range n.terminal[1:] {
+		args[i] = replacer.Replace(arg)
+	}
+	cmd := exec.Command(program, args...)
 	// A terminal launched from a stale tmux environment must attach, not nest.
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "TMUX=") && !strings.HasPrefix(entry, "TMUX_PANE=") {
@@ -180,29 +200,25 @@ func (n *Navigator) Open(note Target) error {
 		return err
 	}
 	go func() { _ = cmd.Wait() }()
-	deadline := time.Now().Add(4 * time.Second)
-	attached := false
-	for !attached && time.Now().Before(deadline) {
+	// The launched process may only ask another app to open a window, as
+	// osascript does for Terminal.app, so focus follows the attached client.
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
 		clients, err := n.clients()
 		if err != nil {
 			return err
 		}
 		for _, c := range clients {
 			if c.session == note.Session {
-				attached = true
+				if err := n.focus(c.pid, true); err != nil {
+					return fmt.Errorf("%w; terminal log: %s", err, log.Name())
+				}
+				return nil
 			}
 		}
-		if !attached {
-			time.Sleep(100 * time.Millisecond)
-		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	if !attached {
-		return fmt.Errorf("Alacritty did not attach to %s; terminal log: %s", note.Session, log.Name())
-	}
-	if err := n.focus(cmd.Process.Pid, true); err != nil {
-		return fmt.Errorf("%w; terminal log: %s", err, log.Name())
-	}
-	return nil
+	return fmt.Errorf("terminal did not attach to %s; check terminal.command; terminal log: %s", note.Session, log.Name())
 }
 
 func (n *Navigator) editor(note Target) (string, error) {
@@ -301,12 +317,12 @@ func (n *Navigator) showNote(note Target, socket, pid string) error {
 	if err != nil {
 		return err
 	}
-	parents, err := processParents()
+	table, err := processes()
 	if err != nil {
 		return err
 	}
 	belongs := false
-	for current, depth := actual, 0; current > 1 && depth < 64; current, depth = parents[current], depth+1 {
+	for _, current := range ancestry(table, actual) {
 		if current == panePID {
 			belongs = true
 			break
@@ -348,31 +364,70 @@ type window struct {
 	Bundle string `json:"app-bundle-id"`
 }
 
-func processParents() (map[int]int, error) {
-	text, err := run("/bin/ps", "-axo", "pid=,ppid=")
+type process struct {
+	parent  int
+	command string // Full executable path on macOS.
+}
+
+func processes() (map[int]process, error) {
+	text, err := run("/bin/ps", "-axo", "pid=,ppid=,comm=")
 	if err != nil {
 		return nil, err
 	}
-	parents := map[int]int{}
+	table := map[int]process{}
 	for _, line := range strings.Split(text, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 {
+		if len(fields) < 3 {
 			continue
 		}
 		child, _ := strconv.Atoi(fields[0])
 		parent, _ := strconv.Atoi(fields[1])
-		parents[child] = parent
+		// Executable paths can contain spaces; keep everything after the PIDs.
+		command := strings.TrimSpace(line)
+		for _, field := range fields[:2] {
+			command = strings.TrimSpace(strings.TrimPrefix(command, field))
+		}
+		table[child] = process{parent, command}
 	}
-	return parents, nil
+	return table, nil
 }
 
-func (n *Navigator) focus(pid int, launched bool) error {
+// ancestry lists pid and its parents, nearest first.
+func ancestry(table map[int]process, pid int) []int {
+	var chain []int
+	for current, depth := pid, 0; current > 1 && depth < 64; current, depth = table[current].parent, depth+1 {
+		chain = append(chain, current)
+	}
+	return chain
+}
+
+// focus brings forward the terminal that hosts the tmux client with this pid.
+// wait allows a just-launched terminal's window time to appear.
+func (n *Navigator) focus(pid int, wait bool) error {
+	switch n.focusMode {
+	case "none":
+		return nil
+	case "macos":
+		return n.focusApp(pid)
+	}
+	err := n.focusWindow(pid, wait)
+	if err != nil && n.focusFallback {
+		if appErr := n.focusApp(pid); appErr == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// focusWindow focuses one exact Aerospace window owned by the client's
+// terminal process. It never guesses between several windows.
+func (n *Navigator) focusWindow(pid int, wait bool) error {
 	if n.aerospace == "" {
 		return errors.New("notes selected in tmux, but Aerospace is unavailable for exact terminal focus")
 	}
 	deadline := time.Now().Add(4 * time.Second)
 	for {
-		text, err := run(n.aerospace, "list-windows", "--monitor", "all", "--app-bundle-id", "org.alacritty", "--format", "%{window-id} %{app-pid} %{app-bundle-id} %{workspace}", "--json")
+		text, err := run(n.aerospace, "list-windows", "--monitor", "all", "--format", "%{window-id} %{app-pid} %{app-bundle-id} %{workspace}", "--json")
 		if err != nil {
 			return err
 		}
@@ -380,28 +435,59 @@ func (n *Navigator) focus(pid int, launched bool) error {
 		if err := json.Unmarshal([]byte(text), &windows); err != nil {
 			return err
 		}
-		ancestry, err := processParents()
+		table, err := processes()
 		if err != nil {
 			return err
 		}
 		ids := map[int]bool{}
-		for current, depth := pid, 0; current > 1 && depth < 64; current, depth = ancestry[current], depth+1 {
+		for _, current := range ancestry(table, pid) {
 			for _, w := range windows {
-				if w.PID == current && w.Bundle == "org.alacritty" {
+				if w.PID == current {
 					ids[w.ID] = true
 				}
 			}
+			if len(ids) > 0 {
+				break // The nearest windowed ancestor is the terminal.
+			}
 		}
 		if len(ids) > 1 {
-			return errors.New("notes selected in tmux, but terminal process owns multiple Aerospace windows; exact focus is ambiguous")
+			return errors.New("notes selected in tmux, but the terminal process owns multiple Aerospace windows; exact focus is ambiguous")
 		}
 		for id := range ids {
 			_, err := run(n.aerospace, "focus", "--window-id", strconv.Itoa(id))
 			return err
 		}
-		if !launched || time.Now().After(deadline) {
-			return errors.New("notes selected in tmux, but no exact Alacritty window could be identified")
+		if !wait || time.Now().After(deadline) {
+			return errors.New("notes selected in tmux, but no exact terminal window could be identified")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// focusApp activates the nearest app bundle in the client's ancestry. macOS
+// raises that app's frontmost window, which may not be the meeting's window.
+func (n *Navigator) focusApp(pid int) error {
+	table, err := processes()
+	if err != nil {
+		return err
+	}
+	for _, current := range ancestry(table, pid) {
+		if bundle := appBundle(table[current].command); bundle != "" {
+			open, err := executable("open")
+			if err != nil {
+				return err
+			}
+			_, err = run(open, "-a", bundle)
+			return err
+		}
+	}
+	return errors.New("notes selected in tmux, but no terminal app could be identified to focus")
+}
+
+// appBundle returns the .app bundle containing an executable, if any.
+func appBundle(command string) string {
+	if i := strings.Index(command, ".app/Contents/MacOS/"); i >= 0 {
+		return command[:i+len(".app")]
+	}
+	return ""
 }

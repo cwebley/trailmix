@@ -55,6 +55,9 @@ func TestMeetingWorkspaceIntegration(t *testing.T) {
 	t.Setenv("TRAILMIX_TEST_TERMINAL_PID", terminalPID)
 	write(filepath.Join(bin, "alacritty"), "#!/bin/sh\nexec "+quote(p.helper)+" trailmix-test-terminal \"$@\"\n", 0700)
 	write(filepath.Join(bin, "aerospace"), fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = list-windows ]; then\n pid=%d\n if [ -f %s ]; then pid=$(cat %s); fi\n printf '[{\"window-id\":17,\"app-pid\":%%s,\"app-bundle-id\":\"org.alacritty\"}]\\n' \"$pid\"\nelse\n printf '%%s\\n' \"$*\" >> %s\nfi\n", os.Getpid(), quote(terminalPID), quote(terminalPID), quote(focusLog)), 0700)
+	// App activation must never raise the developer's real terminal.
+	openLog := filepath.Join(p.home, "open.log")
+	write(filepath.Join(bin, "open"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> "+quote(openLog)+"\n", 0700)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TRAILMIX_HOME", p.home)
 	t.Setenv("TRAILMIX_CAPTURE_HELPER", p.helper)
@@ -103,6 +106,7 @@ func TestMeetingWorkspaceIntegration(t *testing.T) {
 	write(template, "# {{date}} {{time}}\n\nTemplate kept\n", 0600)
 	require("config", "set", "notes_root", root)
 	require("config", "set", "template", template)
+	require("config", "set", "terminal.command", `["alacritty", "-e", "{tmux}", "attach-session", "-t", "{target}"]`)
 	// An unavailable pin fails before a note or capture directory is created.
 	require("config", "set", "microphone", "missing-device")
 	if out, err := run("start"); err == nil || !strings.Contains(string(out), "unavailable") {

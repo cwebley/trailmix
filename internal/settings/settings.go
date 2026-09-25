@@ -19,6 +19,43 @@ type Settings struct {
 	Template   string    `json:"template,omitempty"`
 	Microphone string    `json:"microphone,omitempty"`
 	Assistant  Assistant `json:"assistant"`
+	Terminal   Terminal  `json:"terminal"`
+}
+
+// Terminal chooses how a meeting's tmux session reaches the screen when no
+// tmux client is attached, and how its window is brought forward.
+type Terminal struct {
+	// Command launches a terminal attached to tmux. {tmux}, {target}, and {dir}
+	// are replaced with the tmux executable, attach target, and note directory.
+	Command []string `json:"command"`
+	// Focus is auto, aerospace, macos, or none.
+	Focus string `json:"focus"`
+}
+
+// DefaultTerminalCommand uses Terminal.app, which every Mac has.
+var DefaultTerminalCommand = []string{
+	"osascript",
+	"-e", `tell application "Terminal" to do script "exec '{tmux}' attach-session -t '{target}'"`,
+	"-e", `tell application "Terminal" to activate`,
+}
+
+func (t Terminal) Validate() error {
+	if len(t.Command) == 0 || strings.TrimSpace(t.Command[0]) == "" {
+		return errors.New("terminal.command must be a nonempty executable/argument array")
+	}
+	for _, arg := range t.Command {
+		if strings.ContainsRune(arg, 0) {
+			return errors.New("terminal.command contains a NUL byte")
+		}
+	}
+	if program := t.Command[0]; strings.ContainsRune(program, filepath.Separator) && !filepath.IsAbs(program) {
+		return errors.New("terminal.command executable must be an absolute path or a PATH command")
+	}
+	switch t.Focus {
+	case "auto", "aerospace", "macos", "none":
+		return nil
+	}
+	return errors.New("terminal.focus must be auto, aerospace, macos, or none")
 }
 
 type Assistant struct {
@@ -83,7 +120,7 @@ func Read() (Settings, error) {
 	s := Settings{NotesRoot: filepath.Join(home, "Documents", "TrailMix"), Assistant: Assistant{
 		Command: []string{"opencode", "run", "--format", "json", "--agent", "trailmix-ask"},
 		Format:  "opencode-json", TimeoutSeconds: 180,
-	}}
+	}, Terminal: Terminal{Command: DefaultTerminalCommand, Focus: "auto"}}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return s, err
@@ -99,6 +136,9 @@ func Read() (Settings, error) {
 		return s, errors.New("settings paths must be absolute; use trailmix config set")
 	}
 	if err := s.Assistant.Validate(); err != nil {
+		return s, err
+	}
+	if err := s.Terminal.Validate(); err != nil {
 		return s, err
 	}
 	return s, nil
@@ -122,7 +162,7 @@ func Run(args []string) error {
 		}{path, s})
 	}
 	if len(args) != 3 || args[0] != "set" {
-		return errors.New("usage: trailmix config [show | set notes_root|template|microphone|assistant.command|assistant.format|assistant.timeout_seconds VALUE]; assistant.command is a JSON array")
+		return errors.New("usage: trailmix config [show | set notes_root|template|microphone|assistant.command|assistant.format|assistant.timeout_seconds|terminal.command|terminal.focus VALUE]; commands are JSON arrays")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -169,10 +209,19 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
+	case "terminal.command":
+		if err := json.Unmarshal([]byte(value), &s.Terminal.Command); err != nil {
+			return fmt.Errorf("terminal.command: %w", err)
+		}
+	case "terminal.focus":
+		s.Terminal.Focus = value
 	default:
 		return fmt.Errorf("unknown setting %q", args[1])
 	}
 	if err := s.Assistant.Validate(); err != nil {
+		return err
+	}
+	if err := s.Terminal.Validate(); err != nil {
 		return err
 	}
 	return meeting.WriteJSON(path, s)

@@ -97,3 +97,31 @@ vim.keymap.set("n", "<leader>mt", ":echo 'fixture timestamp'<CR>")
 		})
 	}
 }
+
+func TestAppBundleAndAncestry(t *testing.T) {
+	for command, want := range map[string]string{
+		"/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal": "/System/Applications/Utilities/Terminal.app",
+		"/Applications/Wez Term.app/Contents/MacOS/wezterm-gui":               "/Applications/Wez Term.app",
+		"/opt/homebrew/bin/tmux": "",
+		"-zsh":                   "",
+	} {
+		if got := appBundle(command); got != want {
+			t.Errorf("appBundle(%q) = %q, want %q", command, got, want)
+		}
+	}
+	table := map[int]process{40: {30, "tmux"}, 30: {20, "login"}, 20: {1, "Terminal"}}
+	if got := ancestry(table, 40); len(got) != 3 || got[0] != 40 || got[2] != 20 {
+		t.Fatalf("ancestry = %v", got)
+	}
+}
+
+func TestProcessesKeepsExecutablePaths(t *testing.T) {
+	table, err := processes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, ok := table[os.Getpid()]
+	if !ok || self.parent != os.Getppid() || !strings.HasPrefix(self.command, "/") {
+		t.Fatalf("own process entry: %+v", self)
+	}
+}

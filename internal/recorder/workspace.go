@@ -227,7 +227,7 @@ func workspace(p paths, command string) error {
 	if err != nil {
 		return err
 	}
-	nav, err := navigation.Preflight(p.home)
+	nav, err := navigation.Preflight(p.home, cfg.Terminal)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,11 @@ func openNote(p paths, note meetingNote, s *status) error {
 	if err := validateNote(note); err != nil {
 		return navigationError(note, s, err)
 	}
-	nav, err := navigation.Preflight(p.home)
+	cfg, err := settings.Read()
+	var nav *navigation.Navigator
+	if err == nil {
+		nav, err = navigation.Preflight(p.home, cfg.Terminal)
+	}
 	if err == nil {
 		err = nav.Open(note.Target)
 	}
