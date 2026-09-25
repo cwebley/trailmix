@@ -1,0 +1,8 @@
+/bin/
+/.build/
+/recordings/
+.DS_Store
+/.env
+/.env.*
+/env
+/dist/
