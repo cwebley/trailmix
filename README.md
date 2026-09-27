@@ -130,7 +130,7 @@ Only one insertion request can be pending. Moving the cursor, editing, leaving t
 
 TrailMix launches Neovim with a private local control socket for `open`. The plugin supplies timestamp editing, transcript inspection, and meeting questions. No Neovim lifecycle command is needed. Your editor configuration and hotkeys are installed by you; this checkout does not modify them.
 
-For a global hotkey, point any launcher (Aerospace `exec-and-forget`, skhd, Raycast, Hammerspoon) at `/absolute/path/to/trailmix toggle`, for example `~/.local/bin/trailmix`, expanded. Choose the key yourself. `stop` and the stopping half of `toggle` do not navigate or focus any window.
+For a global hotkey, point any launcher (Aerospace `exec-and-forget`, skhd, Raycast, Hammerspoon) at `/absolute/path/to/trailmix toggle`, for example `~/.local/bin/trailmix`, expanded. Choose the key yourself. If the hotkey runs TrailMix through `tmux run-shell`, append `>/dev/null`: tmux otherwise shows the printed JSON status over the new note until you press `q`, while errors still appear. `stop` and the stopping half of `toggle` do not navigate or focus any window.
 
 ### Transcript split
 
