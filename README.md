@@ -37,6 +37,16 @@ ln -sf ~/.local/lib/trailmix-VERSION-darwin-universal/trailmix ~/.local/bin/trai
 
 Release builds are ad-hoc signed, not notarized, so Gatekeeper blocks the downloaded helper until the quarantine attribute is removed. macOS asks for Microphone and Screen & System Audio Recording access on first capture, and may ask again after an upgrade replaces the helper.
 
+### Check your setup
+
+```sh
+trailmix doctor
+```
+
+`doctor` checks macOS, the capture helper and its signature, Microphone and Screen & System Audio Recording access, settings, the notes folder and template, a pinned microphone, the saved OpenAI key, tmux, Neovim, the terminal command, focus, the assistant command, and the tmux recording indicator. Each line is ✓, `!` (works, but worth knowing), or ✗, with a fix where one applies. It exits nonzero if any check fails; `--json` returns the same results for scripts.
+
+It never records, contacts OpenAI, or triggers a permission prompt. macOS attributes permissions to the app that launched TrailMix, so a hotkey launch can be treated differently from the terminal where you ran `doctor`. A saved key is not verified with OpenAI.
+
 Examples below use `trailmix` on your PATH.
 
 ## Meeting workspace

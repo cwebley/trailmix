@@ -42,6 +42,27 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
+// Resolve finds the assistant executable the way Run will launch it.
+func Resolve(cfg settings.Assistant) (string, error) {
+	program := cfg.Command[0]
+	if strings.ContainsRune(program, filepath.Separator) && !filepath.IsAbs(program) {
+		return "", errors.New("assistant executable must be an absolute path or a PATH command")
+	}
+	if path, err := exec.LookPath(program); err == nil {
+		return path, nil
+	}
+	// tmux and desktop launches may not inherit the interactive shell's PATH.
+	if program == "opencode" {
+		home, _ := os.UserHomeDir()
+		for _, candidate := range []string{filepath.Join(home, ".opencode", "bin", "opencode"), "/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"} {
+			if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+				return candidate, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("assistant executable %q not found", program)
+}
+
 func Run(ctx context.Context, cfg settings.Assistant, directory, prompt string) (Result, error) {
 	var result Result
 	if err := cfg.Validate(); err != nil {
@@ -50,21 +71,9 @@ func Run(ctx context.Context, cfg settings.Assistant, directory, prompt string) 
 	if len(prompt) > MaxContextBytes {
 		return result, errors.New("meeting context exceeds 2 MiB; no request was sent")
 	}
-	program := cfg.Command[0]
-	if strings.ContainsRune(program, filepath.Separator) && !filepath.IsAbs(program) {
-		return result, errors.New("assistant executable must be an absolute path or a PATH command")
-	}
-	// tmux and desktop launches may not inherit the interactive shell's PATH.
-	if program == "opencode" {
-		if _, err := exec.LookPath(program); err != nil {
-			home, _ := os.UserHomeDir()
-			for _, candidate := range []string{filepath.Join(home, ".opencode", "bin", "opencode"), "/opt/homebrew/bin/opencode", "/usr/local/bin/opencode"} {
-				if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
-					program = candidate
-					break
-				}
-			}
-		}
+	program, err := Resolve(cfg)
+	if err != nil {
+		return result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -85,7 +94,7 @@ func Run(ctx context.Context, cfg settings.Assistant, directory, prompt string) 
 	cmd.WaitDelay = 2 * time.Second
 	stdout, stderr := boundedBuffer{cancel: cancel}, boundedBuffer{cancel: cancel}
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	// A wrapper may exit before its children close inherited pipes. WaitDelay
 	// bounds our wait, but does not terminate those remaining group members.
 	if cmd.Process != nil {

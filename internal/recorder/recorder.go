@@ -112,6 +112,7 @@ const usage = `TrailMix meeting capture, transcription, and notes (macOS 15+)
   trailmix auth status                  Show whether a key is saved
   trailmix auth logout                  Remove the saved key
   trailmix devices                      List microphone IDs
+  trailmix doctor [--json]              Check the installation, permissions, and settings
   trailmix start                        Record with transcription and open new meeting notes
   trailmix record [--mic ID] [--output DIR] [--transcribe] [--max-duration 3h]  Low-level background capture
   trailmix toggle                       Start a meeting, or stop active capture
@@ -157,6 +158,8 @@ func Run(args []string) error {
 		defer guard.Close()
 	}
 	switch args[0] {
+	case "doctor":
+		return doctor(p, args[1:])
 	case "ask", "answers":
 		return runAnswers(p, args[0], args[1:])
 	case "start", "toggle", "open":

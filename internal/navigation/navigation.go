@@ -39,6 +39,10 @@ type Navigator struct {
 }
 
 // Hotkeys need not inherit an interactive shell's Homebrew PATH.
+// Find resolves an executable the way navigation launches it, including
+// Homebrew locations that hotkey launches may lack in PATH.
+func Find(name string) (string, error) { return executable(name) }
+
 func executable(name string) (string, error) {
 	if path, err := exec.LookPath(name); err == nil {
 		return filepath.Abs(path)

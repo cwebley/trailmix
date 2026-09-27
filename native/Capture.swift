@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -410,6 +411,17 @@ struct CaptureMain {
                 }
                 guard let output else { throw CaptureError("--output is required") }
                 try await record(directory: URL(fileURLWithPath: output), microphoneID: mic, streaming: streaming)
+            case "permissions":
+                // Report without prompting; the first recording asks macOS.
+                let microphone: String
+                switch AVCaptureDevice.authorizationStatus(for: .audio) {
+                case .authorized: microphone = "authorized"
+                case .denied: microphone = "denied"
+                case .restricted: microphone = "restricted"
+                case .notDetermined: microphone = "not_determined"
+                @unknown default: microphone = "unknown"
+                }
+                emit(["microphone": microphone, "screen_capture": CGPreflightScreenCaptureAccess()])
             case "self-test":
                 try selfTest()
                 emit(["self_test": "passed"])
@@ -417,7 +429,7 @@ struct CaptureMain {
                 guard args.count == 3, args[1] == "--output" else { throw CaptureError("Use prepare-stream --output DIR") }
                 try prepareStream(directory: URL(fileURLWithPath: args[2]))
             default:
-                throw CaptureError("Use devices, record --output DIR [--mic ID], or self-test")
+                throw CaptureError("Use devices, permissions, record --output DIR [--mic ID], or self-test")
             }
         } catch {
             emit(["type": "error", "error": error.localizedDescription])
