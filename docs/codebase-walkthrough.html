@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrailMix Codebase Tour</title>
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --surface-2: #f3f1ec; --text: #1f1d1a; --muted: #6b665e;
+  --border: #e2ded6; --accent: #2f6f5e; --accent-soft: #e3efe9;
+  --go: #0f7c9c; --swift: #d0542c; --lua: #3d4fb8; --ext: #7a6a3a; --store: #6b5aa6;
+  --code-bg: #f5f3ee; --warn: #9a6700;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161514; --surface: #1e1d1b; --surface-2: #26241f; --text: #ece9e3; --muted: #a39e94;
+    --border: #36332d; --accent: #7cc4ad; --accent-soft: #23332d;
+    --go: #5cc3e0; --swift: #f08a62; --lua: #8f9cf0; --ext: #cdb876; --store: #b3a4ec;
+    --code-bg: #201f1c; --warn: #e3b341;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161514; --surface: #1e1d1b; --surface-2: #26241f; --text: #ece9e3; --muted: #a39e94;
+  --border: #36332d; --accent: #7cc4ad; --accent-soft: #23332d;
+  --go: #5cc3e0; --swift: #f08a62; --lua: #8f9cf0; --ext: #cdb876; --store: #b3a4ec;
+  --code-bg: #201f1c; --warn: #e3b341;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+}
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; }
+:not(pre) > code { background: var(--code-bg); border: 1px solid var(--border); padding: 0.05em 0.35em; border-radius: 4px; }
+pre {
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; overflow-x: auto; line-height: 1.5; margin: 12px 0 18px;
+}
+pre .c { color: var(--muted); font-style: italic; }
+pre .k { color: var(--accent); font-weight: 600; }
+a { color: var(--accent); }
+.layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
+nav.toc {
+  position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+  padding: 32px 16px 32px 24px; border-right: 1px solid var(--border); font-size: 14px;
+}
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+nav.toc .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; margin: 2px 0; }
+nav.toc a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--text); text-decoration: none; }
+nav.toc a::before { content: counter(s, decimal-leading-zero) "  "; color: var(--muted); font-variant-numeric: tabular-nums; }
+nav.toc a:hover { background: var(--surface-2); }
+main { padding: 40px 48px 120px; min-width: 0; }
+header.hero h1 { font-size: 34px; line-height: 1.15; margin: 0 0 10px; letter-spacing: -0.01em; }
+header.hero p.lede { font-size: 18px; color: var(--muted); margin: 0 0 22px; max-width: 760px; }
+section { padding-top: 28px; margin-top: 28px; border-top: 1px solid var(--border); }
+section h2 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.005em; }
+section h2 .num { color: var(--muted); font-weight: 500; margin-right: 8px; font-variant-numeric: tabular-nums; }
+section h3 { font-size: 17px; margin: 26px 0 6px; }
+.why { color: var(--muted); margin: 0 0 16px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin: 14px 0;
+}
+.callout { background: var(--accent-soft); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.lang { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; border: 1px solid currentColor; }
+.lang.go { color: var(--go); } .lang.swift { color: var(--swift); } .lang.lua { color: var(--lua); } .lang.ext { color: var(--ext); }
+table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+td code { white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+.tree { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13.5px; line-height: 1.65; white-space: pre; overflow-x: auto; }
+.tree .d { color: var(--muted); }
+.tree .go { color: var(--go); } .tree .sw { color: var(--swift); } .tree .lu { color: var(--lua); }
+figure { margin: 18px 0 22px; }
+figure svg { width: 100%; height: auto; display: block; }
+figcaption { color: var(--muted); font-size: 13.5px; margin-top: 8px; }
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif; fill: var(--text); }
+svg .muted { fill: var(--muted); }
+svg .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }
+svg .box.go { stroke: var(--go); } svg .box.swift { stroke: var(--swift); } svg .box.lua { stroke: var(--lua); }
+svg .box.ext { stroke: var(--ext); stroke-dasharray: 5 4; } svg .box.store { stroke: var(--store); }
+svg .zone { fill: var(--surface-2); stroke: none; }
+svg .edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .edge.go { stroke: var(--go); } svg .edge.swift { stroke: var(--swift); } svg .edge.lua { stroke: var(--lua); } svg .edge.ext { stroke: var(--ext); }
+svg .t-go { fill: var(--go); } svg .t-swift { fill: var(--swift); } svg .t-lua { fill: var(--lua); } svg .t-ext { fill: var(--ext); } svg .t-store { fill: var(--store); }
+svg .life { stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 12px 0; }
+.steps > li { counter-increment: st; position: relative; padding: 2px 0 12px 40px; }
+.steps > li::before {
+  content: counter(st); position: absolute; left: 0; top: 2px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center;
+}
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); margin-right: 4px; }
+.reading li { margin: 6px 0; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  nav.toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 20px 16px; }
+  main { padding: 24px 16px 80px; }
+  header.hero h1 { font-size: 27px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">TrailMix tour</div>
+  <div class="sub">A newcomer's walkthrough · 2026-09-30</div>
+  <ol>
+    <li><a href="#what">What it does</a></li>
+    <li><a href="#processes">The four processes</a></li>
+    <li><a href="#layout">Repo layout</a></li>
+    <li><a href="#build">Build &amp; packaging</a></li>
+    <li><a href="#start">Trace: <code>trailmix start</code></a></li>
+    <li><a href="#swift">Swift capture helper</a></li>
+    <li><a href="#contracts">The contracts between pieces</a></li>
+    <li><a href="#transcription">Transcription pipeline</a></li>
+    <li><a href="#storage">What lands on disk</a></li>
+    <li><a href="#navigation">tmux &amp; terminal navigation</a></li>
+    <li><a href="#lua">Neovim plugin (Lua)</a></li>
+    <li><a href="#ask">Ask &amp; citations</a></li>
+    <li><a href="#patterns">Patterns you'll see everywhere</a></li>
+    <li><a href="#tests">Tests &amp; CI</a></li>
+    <li><a href="#reading">Reading order</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <h1>How TrailMix fits together</h1>
+  <p class="lede">A tour of the whole codebase for someone who knows how to build software but hasn't read this repo yet. It goes outside-in: what the tool does, which processes run, how one command moves through them, and then each language layer in turn.</p>
+  <div>
+    <span class="lang go">Go</span> CLI, recorder daemon, transcription, navigation &nbsp;
+    <span class="lang swift">Swift</span> native audio capture &nbsp;
+    <span class="lang lua">Lua</span> Neovim companion &nbsp;
+    <span class="lang ext">External</span> tmux, OpenAI, OpenCode
+  </div>
+</header>
+
+<!-- 1 -->
+<section id="what">
+  <h2><span class="num">01</span>What it does</h2>
+  <p class="why">Start with the user's view. Every design choice below follows from it.</p>
+  <p>You press a hotkey bound to <code>trailmix toggle</code>. TrailMix then:</p>
+  <ol class="steps">
+    <li>Creates a dated Markdown note, e.g. <code>~/Documents/TrailMix/2026-09-30/16-01-38.md</code>, stamped with a hidden <code>&lt;!-- trailmix: meeting &lt;id&gt; --&gt;</code> marker.</li>
+    <li>Starts recording <strong>two tracks</strong>: your microphone and the system's audio (the other people on the call).</li>
+    <li>Streams both tracks to OpenAI's realtime transcription API while still writing the full audio to local disk.</li>
+    <li>Opens the note in Neovim, inside a tmux session for the day, and brings that terminal window to the front.</li>
+  </ol>
+  <p>While you type notes, the Neovim plugin lets you drop <code>@MM:SS</code> timestamps, open a live transcript split, and ask an AI assistant questions. Answers cite the transcript passages they rely on. Pressing the hotkey again stops the recording.</p>
+</section>
+
+<!-- 2 -->
+<section id="processes">
+  <h2><span class="num">02</span>The four processes</h2>
+  <p class="why">The most useful mental model: during a meeting, four of our own processes are alive at once, and they talk only through pipes, a Unix socket, JSON on stdout, and files.</p>
+
+  <figure>
+  <svg viewBox="0 0 960 520" role="img" aria-label="Process architecture diagram">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color: var(--muted)"/></marker>
+    </defs>
+    <!-- zones -->
+    <rect class="zone" x="10" y="10" width="300" height="250" rx="12"/>
+    <text x="26" y="34" class="muted" font-size="12" font-weight="600">EDITOR SIDE (inside tmux)</text>
+    <rect class="zone" x="330" y="10" width="620" height="500" rx="12"/>
+    <text x="346" y="34" class="muted" font-size="12" font-weight="600">TRAILMIX PROCESSES</text>
+
+    <!-- nvim -->
+    <rect class="box lua" x="30" y="56" width="260" height="88" rx="10"/>
+    <text x="46" y="82" font-weight="700" font-size="15">Neovim + plugin</text>
+    <text x="46" y="102" class="t-lua" font-size="12">lua/trailmix/*.lua</text>
+    <text x="46" y="122" class="muted" font-size="12">timestamps · transcript · ask</text>
+
+    <!-- tmux -->
+    <rect class="box ext" x="30" y="170" width="260" height="70" rx="10"/>
+    <text x="46" y="196" font-weight="700" font-size="15">tmux + terminal app</text>
+    <text x="46" y="218" class="muted" font-size="12">trailmix-YYYY-MM-DD session</text>
+
+    <!-- short-lived CLI -->
+    <rect class="box go" x="360" y="56" width="270" height="88" rx="10"/>
+    <text x="376" y="82" font-weight="700" font-size="15">① trailmix (CLI)</text>
+    <text x="376" y="102" class="t-go" font-size="12">cmd/trailmix · internal/recorder/cli.go</text>
+    <text x="376" y="122" class="muted" font-size="12">short-lived: one command, then exits</text>
+
+    <!-- recorder -->
+    <rect class="box go" x="360" y="210" width="270" height="110" rx="10"/>
+    <text x="376" y="236" font-weight="700" font-size="15">② recorder daemon</text>
+    <text x="376" y="256" class="t-go" font-size="12">trailmix _record · recorder.go</text>
+    <text x="376" y="276" class="muted" font-size="12">detached; owns one recording</text>
+    <text x="376" y="296" class="muted" font-size="12">serves recorder.sock</text>
+
+    <!-- transcription goroutines -->
+    <rect class="box go" x="660" y="210" width="270" height="110" rx="10"/>
+    <text x="676" y="236" font-weight="700" font-size="15">transcription.Runner</text>
+    <text x="676" y="256" class="t-go" font-size="12">goroutines inside ②</text>
+    <text x="676" y="276" class="muted" font-size="12">tails PCM queue per track,</text>
+    <text x="676" y="296" class="muted" font-size="12">one websocket per track</text>
+
+    <!-- swift helper -->
+    <rect class="box swift" x="360" y="390" width="270" height="100" rx="10"/>
+    <text x="376" y="416" font-weight="700" font-size="15">③ TrailMixCapture.app</text>
+    <text x="376" y="436" class="t-swift" font-size="12">native/Capture.swift</text>
+    <text x="376" y="456" class="muted" font-size="12">ScreenCaptureKit: mic + system</text>
+    <text x="376" y="476" class="muted" font-size="12">writes audio files, emits JSONL</text>
+
+    <!-- disk -->
+    <rect class="box store" x="660" y="390" width="270" height="100" rx="10"/>
+    <text x="676" y="416" font-weight="700" font-size="15">Recording directory</text>
+    <text x="676" y="436" class="t-store" font-size="12">*.caf · *.stream.pcm · *.jsonl</text>
+    <text x="676" y="456" class="muted" font-size="12">the durable hand-off between</text>
+    <text x="676" y="476" class="muted" font-size="12">Swift and Go transcription</text>
+
+    <!-- external -->
+    <rect class="box ext" x="660" y="56" width="270" height="88" rx="10"/>
+    <text x="676" y="82" font-weight="700" font-size="15">④ Assistant (OpenCode)</text>
+    <text x="676" y="102" class="t-ext" font-size="12">spawned per question by trailmix ask</text>
+    <text x="676" y="122" class="muted" font-size="12">+ OpenAI realtime API (wss)</text>
+
+    <!-- edges -->
+    <path class="edge lua" d="M290,90 L360,90" marker-end="url(#arr)"/>
+    <text x="300" y="82" font-size="11" class="t-lua">vim.system</text>
+    <path class="edge go" d="M495,144 L495,210" marker-end="url(#arr)"/>
+    <text x="503" y="172" font-size="11" class="t-go">spawn _record (setsid)</text>
+    <text x="503" y="188" font-size="11" class="t-go">then JSON over recorder.sock</text>
+    <path class="edge go" d="M440,144 L290,205" marker-end="url(#arr)"/>
+    <text x="318" y="160" font-size="11" class="t-go" transform="rotate(-21 318 160)">tmux commands</text>
+    <path class="edge go" d="M495,320 L495,390" marker-end="url(#arr)"/>
+    <text x="503" y="350" font-size="11" class="t-go">spawn; stdin EOF = stop</text>
+    <path class="edge swift" d="M470,390 L470,320" marker-end="url(#arr)"/>
+    <text x="378" y="364" font-size="11" class="t-swift">stdout JSONL</text>
+    <path class="edge swift" d="M630,440 L660,440" marker-end="url(#arr)"/>
+    <path class="edge go" d="M795,390 L795,320" marker-end="url(#arr)"/>
+    <text x="803" y="360" font-size="11" class="t-go">tail files</text>
+    <path class="edge ext" d="M795,210 L795,144" marker-end="url(#arr)"/>
+    <text x="803" y="182" font-size="11" class="t-ext">websocket</text>
+    <path class="edge go" d="M630,100 L660,100" marker-end="url(#arr)"/>
+  </svg>
+  <figcaption>Solid boxes are our code; dashed boxes are external programs. The CLI ① is run many times per meeting: by your hotkey, by tmux's status line, and by the Neovim plugin.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="card">
+      <span class="lang go">Go</span>
+      <h3 style="margin-top:8px">① CLI and ② recorder are the <em>same binary</em></h3>
+      <p>The CLI launches the daemon by re-executing itself with the hidden subcommand <code>_record</code>, in a new session (<code>Setsid</code>) so it survives the terminal closing. The daemon then holds a lock and serves status/stop over <code>recorder.sock</code>.</p>
+    </div>
+    <div class="card">
+      <span class="lang swift">Swift</span>
+      <h3 style="margin-top:8px">③ is a separate signed <code>.app</code></h3>
+      <p>Go can't easily call ScreenCaptureKit, and macOS attributes Microphone / Screen Recording permissions to an app bundle. So capture lives in a small Swift program the recorder spawns as a child.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="layout">
+  <h2><span class="num">03</span>Repo layout</h2>
+  <p class="why">About 10k lines in total. Most of the Go lives in <code>internal/recorder</code>, which is really the "app" package; the other packages are focused libraries it uses.</p>
+<div class="card tree"><span class="d">trailmix/</span>
+├── <span class="go">cmd/trailmix/main.go</span>            <span class="d"># 22 lines: version flag, then recorder.Run(os.Args)</span>
+├── <span class="go">internal/</span>
+│   ├── <span class="go">recorder/</span>                    <span class="d"># the application: commands + daemon</span>
+│   │   ├── cli.go                   <span class="d"># Run(): command dispatch, usage text</span>
+│   │   ├── workspace.go             <span class="d"># start / toggle / open: notes + launch + navigate</span>
+│   │   ├── client.go                <span class="d"># CLI side of the socket: launch, request, lock</span>
+│   │   ├── recorder.go              <span class="d"># daemon side: serve(), capture(), session state</span>
+│   │   ├── indicator.go             <span class="d"># tmux status-line flag (@trailmix_rec)</span>
+│   │   ├── transcript.go, artifacts.go  <span class="d"># read transcript, write .transcript.md sidecar</span>
+│   │   ├── answers.go               <span class="d"># trailmix ask / answers, prompt + citation check</span>
+│   │   └── doctor.go                <span class="d"># trailmix doctor health checks</span>
+│   ├── <span class="go">transcription/</span>               <span class="d"># PCM queue → OpenAI realtime → passages</span>
+│   │   ├── stream.go                <span class="d"># Runner, per-track tail loop, segmenter</span>
+│   │   ├── provider.go              <span class="d"># websocket client for one track</span>
+│   │   └── store.go                 <span class="d"># turns/passages/status persisted as JSON</span>
+│   ├── <span class="go">navigation/</span>navigation.go     <span class="d"># tmux sessions, nvim launch, terminal focus</span>
+│   ├── <span class="go">assistant/</span>runner.go         <span class="d"># runs the headless assistant command safely</span>
+│   ├── <span class="go">meeting/</span>identity.go        <span class="d"># 32-hex meeting IDs, atomic JSON writes</span>
+│   ├── <span class="go">settings/</span>settings.go       <span class="d"># settings.json + trailmix config</span>
+│   ├── <span class="go">auth/</span>auth.go               <span class="d"># OpenAI key storage + trailmix auth</span>
+│   └── <span class="go">cliout/</span>cliout.go           <span class="d"># every JSON doc gets schema_version first</span>
+├── <span class="sw">native/</span>
+│   ├── <span class="sw">Capture.swift</span>                <span class="d"># 791 lines: the whole capture helper</span>
+│   └── Info.plist                   <span class="d"># bundle id + permission usage strings</span>
+├── <span class="lu">lua/trailmix/</span>                    <span class="d"># Neovim plugin (lazy.nvim loads it from this repo)</span>
+│   ├── init.lua                     <span class="d"># setup(), commands, keymaps, timestamp insert</span>
+│   ├── cli.lua, note.lua, anchors.lua  <span class="d"># JSON decode, find meeting ID, parse @MM:SS</span>
+│   ├── transcript.lua, transcript_view.lua  <span class="d"># live transcript split (polls CLI)</span>
+│   ├── ask.lua                      <span class="d"># ask prompt, answers buffer, follow citations</span>
+│   └── panel.lua                    <span class="d"># shared right-hand window + back history</span>
+├── <span class="lu">tests/nvim/*.lua</span>                 <span class="d"># headless Neovim tests</span>
+├── Makefile                         <span class="d"># build, install, test, dist</span>
+└── .github/workflows/               <span class="d"># CI on macos-15, tagged releases</span></div>
+</section>
+
+<!-- 4 -->
+<section id="build">
+  <h2><span class="num">04</span>Build &amp; packaging</h2>
+  <p class="why">The Makefile matters more than usual here, because two toolchains produce two artifacts that must be shipped side by side.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Target</th><th>What it does</th></tr>
+    <tr><td><code>make build</code></td><td><code>go build</code> per arch → <code>lipo</code> into <code>bin/trailmix</code>. <code>swiftc</code> per arch → <code>lipo</code> into <code>bin/TrailMixCapture.app/Contents/MacOS/trailmix-capture</code>, then ad-hoc <code>codesign</code>.</td></tr>
+    <tr><td><code>make install</code></td><td>Copies both into <code>~/.local/lib/trailmix/</code>, symlinks <code>~/.local/bin/trailmix</code>.</td></tr>
+    <tr><td><code>make test</code></td><td><code>go test -race ./...</code>, then <code>trailmix-capture self-test</code>, then headless Neovim tests.</td></tr>
+    <tr><td><code>make dist</code></td><td>Universal (arm64 + x86_64) tarball + sha256 for GitHub Releases.</td></tr>
+  </table></div>
+  <p>The CLI finds the helper relative to its own resolved path (<code>recorder.go: config()</code>):</p>
+<pre>helper = filepath.Join(filepath.Dir(executable), <span class="k">"TrailMixCapture.app"</span>, <span class="k">"Contents"</span>, <span class="k">"MacOS"</span>, <span class="k">"trailmix-capture"</span>)
+<span class="c">// overridable with TRAILMIX_CAPTURE_HELPER; state dir overridable with TRAILMIX_HOME</span></pre>
+  <div class="callout"><strong>Why the helper's config is tracked</strong>The Makefile writes <code>.build/helper-config</code> containing the arch list and version, and forces a Swift rebuild when it changes. File mtimes can't tell you "this was built for a different architecture."</div>
+</section>
+
+<!-- 5 -->
+<section id="start">
+  <h2><span class="num">05</span>Trace: <code>trailmix start</code></h2>
+  <p class="why">Following one command end to end covers most of the Go code. <code>toggle</code> is <code>start</code> when idle and <code>stop</code> otherwise.</p>
+
+  <figure>
+  <svg viewBox="0 0 960 610" role="img" aria-label="Sequence diagram for trailmix start">
+    <defs>
+      <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color: var(--muted)"/></marker>
+    </defs>
+    <!-- headers -->
+    <rect class="box go" x="20" y="10" width="170" height="40" rx="8"/><text x="105" y="35" text-anchor="middle" font-weight="700" font-size="13">trailmix start</text>
+    <rect class="box go" x="275" y="10" width="170" height="40" rx="8"/><text x="360" y="35" text-anchor="middle" font-weight="700" font-size="13">_record daemon</text>
+    <rect class="box swift" x="530" y="10" width="170" height="40" rx="8"/><text x="615" y="35" text-anchor="middle" font-weight="700" font-size="13">capture helper</text>
+    <rect class="box ext" x="770" y="10" width="170" height="40" rx="8"/><text x="855" y="35" text-anchor="middle" font-weight="700" font-size="13">tmux / nvim</text>
+    <line class="life" x1="105" y1="50" x2="105" y2="600"/>
+    <line class="life" x1="360" y1="50" x2="360" y2="600"/>
+    <line class="life" x1="615" y1="50" x2="615" y2="600"/>
+    <line class="life" x1="855" y1="50" x2="855" y2="600"/>
+
+    <g font-size="12">
+    <text x="115" y="80">lifecycleLock (workspace.lock)</text>
+    <text x="115" y="100">recorderState → idle?</text>
+    <text x="115" y="120">navigation.Preflight, checkMicrophone</text>
+    <text x="115" y="140">newNote → .md with meeting marker</text>
+
+    <path class="edge go" d="M105,170 L355,170" marker-end="url(#arr2)"/>
+    <text x="115" y="164" class="t-go">exec self "_record --meeting-id …"</text>
+    <text x="370" y="192">lock (recorder.lock, held for life)</text>
+    <text x="370" y="212">mkdir recordings/&lt;ts&gt;-xxxx</text>
+    <text x="370" y="232">listen recorder.sock</text>
+
+    <path class="edge go" d="M360,256 L110,256" marker-end="url(#arr2)"/>
+    <text x="150" y="250" class="t-go">poll "status" every 100ms → starting</text>
+
+    <path class="edge go" d="M360,286 L610,286" marker-end="url(#arr2)"/>
+    <text x="370" y="280" class="t-go">spawn "record --stream true"</text>
+    <text x="370" y="306">transcription.Start(dir, key)</text>
+    <text x="625" y="316">permissions, ScreenCaptureKit</text>
+    <text x="625" y="336">startCapture()</text>
+
+    <path class="edge swift" d="M615,360 L365,360" marker-end="url(#arr2)"/>
+    <text x="400" y="354" class="t-swift">{"type":"started", …}</text>
+    <text x="370" y="380">state = "recording"</text>
+
+    <path class="edge go" d="M360,404 L110,404" marker-end="url(#arr2)"/>
+    <text x="150" y="398" class="t-go">status → recording</text>
+
+    <path class="edge go" d="M105,434 L850,434" marker-end="url(#arr2)"/>
+    <text x="115" y="428" class="t-go">nav.Open(note): new-session/new-window, nvim --listen, switch-client, focus</text>
+    <text x="115" y="460">print status JSON, exit 0</text>
+
+    <path class="edge swift" d="M615,490 L365,490" marker-end="url(#arr2)"/>
+    <text x="400" y="484" class="t-swift">{"type":"progress"} every 1s</text>
+    <text x="370" y="512">saveStatus → session.json, last.json</text>
+    <text x="370" y="532">indicator → tmux @trailmix_rec</text>
+    <text x="625" y="512">writes .caf + .stream.pcm</text>
+    <text x="625" y="532">continuously</text>
+    <text x="20" y="580" class="muted">The CLI process is gone after step "exit 0"; the daemon and helper keep running until stop.</text>
+    </g>
+  </svg>
+  <figcaption>Sequence for a fresh <code>start</code>. Everything left of the daemon's lifeline lives in <code>workspace.go</code> + <code>client.go</code>; the daemon is <code>recorder.go</code>.</figcaption>
+  </figure>
+
+  <h3>The dispatch entry point</h3>
+  <p><code>cli.go: Run</code> is a flat switch. Commands that change lifecycle state first take <code>workspace.lock</code> so two hotkey presses can't race:</p>
+<pre><span class="k">switch</span> args[0] {
+<span class="k">case</span> "start", "record", "toggle", "open", "stop":
+    guard, err := lifecycleLock(p)   <span class="c">// flock, waits up to 50s</span>
+    <span class="k">defer</span> guard.Close()
+}
+<span class="k">switch</span> args[0] {
+<span class="k">case</span> "start", "toggle", "open": <span class="k">return</span> workspace(p, args[0])
+<span class="k">case</span> "record", "_record":        <span class="k">return</span> recordCommand(p, args)  <span class="c">// _record → serve()</span>
+<span class="k">case</span> "status", "stop":           <span class="k">return</span> statusCommand(p, args)
+<span class="k">case</span> "transcript", "retry":      <span class="k">return</span> transcriptCommand(p, args)
+<span class="k">case</span> "ask", "answers":           <span class="k">return</span> runAnswers(p, args[0], args[1:])
+...</pre>
+
+  <h3>The daemon's core loop (<code>recorder.go: capture</code>)</h3>
+  <p>The daemon spawns the Swift helper, then reads one JSON event per line from its stdout and folds each into the session status. Pseudocode:</p>
+<pre>cmd := exec(helper, "record", "--output", dir, "--mic", mic, "--stream", "true")
+<span class="k">go</span> <span class="k">func</span>() {               <span class="c">// stop path</span>
+    &lt;-s.stop                  <span class="c">// closed by socket "stop", SIGTERM, or 3h timer</span>
+    stdin.Close()             <span class="c">// helper reads EOF → finalizes files → exits</span>
+    after 10s: kill
+}()
+<span class="k">for</span> line := <span class="k">range</span> stdout {
+    <span class="k">switch</span> event.Type {
+    <span class="k">case</span> "started":  state = "recording"; read capture.json for actual mic name
+    <span class="k">case</span> "progress", "stopped": update elapsed + per-track stats
+    <span class="k">case</span> "error":    remember error
+    <span class="k">case</span> "transcription_error": transcriber.Fail(...)
+    }
+    saveStatus()              <span class="c">// atomic write of session.json + last.json</span>
+    indicator.publish()       <span class="c">// async tmux status-line update</span>
+}</pre>
+  <div class="callout"><strong>Stop is just closing a pipe</strong>The helper treats stdin EOF as "stop", so if the Go daemon crashes, the OS closes the pipe and the helper still finalizes its audio files cleanly. The same idea runs the other way: if the helper's stdout write fails, it stops itself instead of recording invisibly.</div>
+
+  <h3>How <code>status</code> and <code>stop</code> find the daemon</h3>
+<pre><span class="c">// client.go: tiny request/response over a Unix socket</span>
+conn := net.Dial("unix", "~/Library/Application Support/TrailMix/recorder.sock")
+send {"command": "status"}     <span class="c">// or "stop": daemon blocks until finalized, then replies</span>
+read status JSON
+<span class="c">// No socket? → lastStatus(): read last.json. If it says "recording" but nobody</span>
+<span class="c">// holds recorder.lock, report state "interrupted" (the daemon died).</span></pre>
+</section>
+
+<!-- 6 -->
+<section id="swift">
+  <h2><span class="num">06</span>Swift capture helper</h2>
+  <p class="why">One file, <code>native/Capture.swift</code>. You can read it as four classes and a <code>main</code>.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Piece</th><th>Role</th></tr>
+    <tr><td><code>CaptureMain.main</code></td><td>Subcommands: <code>devices</code>, <code>permissions</code>, <code>record</code>, <code>prepare-stream</code>, <code>self-test</code>. Errors become <code>{"type":"error"}</code> + exit 1.</td></tr>
+    <tr><td><code>CaptureMain.record</code></td><td>Requests mic access, picks the device, configures an <code>SCStream</code> for audio + microphone at 48 kHz (with a 2×2 px dummy video config, since ScreenCaptureKit requires a display filter), writes <code>capture.json</code>, starts a 1 s progress timer, waits for a stop signal.</td></tr>
+    <tr><td><code>CaptureOutput</code></td><td>The <code>SCStreamOutput</code> delegate. Each sample buffer gets its timestamp converted to host-clock seconds since <code>origin</code>, then is routed to the <code>system</code> or <code>microphone</code> writer. All mutable state runs on one serial <code>DispatchQueue</code>.</td></tr>
+    <tr><td><code>TrackWriter</code></td><td>Per track: writes original-format PCM to <code>&lt;track&gt;.caf</code> and one row per buffer to <code>&lt;track&gt;.timeline.jsonl</code> (file frame → meeting time, plus gaps). Tracks peak level for the "silent mic" warnings.</td></tr>
+    <tr><td><code>StreamWriter</code></td><td>Per track: resamples to 24 kHz mono Int16 (what OpenAI wants) and appends to <code>&lt;track&gt;.stream.pcm</code>, publishing a row to <code>&lt;track&gt;.stream.jsonl</code> <em>only after</em> the bytes are written.</td></tr>
+  </table></div>
+
+<pre><span class="c">// The protocol to Go is just newline-delimited JSON on stdout.</span>
+<span class="k">func</span> emit(_ value: [String: Any]) {
+    outputLock.lock(); <span class="k">defer</span> { outputLock.unlock() }
+    <span class="k">guard</span> !stdoutLost <span class="k">else</span> { <span class="k">return</span> }
+    <span class="k">do</span> { <span class="k">try</span> FileHandle.standardOutput.write(contentsOf: jsonLine(value)) }
+    <span class="k">catch</span> { stdoutLost = <span class="k">true</span>; onParentLost?() }  <span class="c">// parent gone → stop cleanly</span>
+}
+
+<span class="c">// Stop sources all feed one AsyncStream: stdin EOF, SIGINT, SIGTERM, fatal errors.</span>
+Thread.detachNewThread { _ = readLine(); stops.continuation.yield(()) }
+...
+<span class="k">for await</span> _ <span class="k">in</span> stops.stream { <span class="k">break</span> }
+<span class="k">try await</span> stream.stopCapture()
+<span class="k">try</span> output.finish()   <span class="c">// close CAF headers, fsync journals, emit "stopped"</span></pre>
+
+  <div class="callout"><strong>Two copies of the audio, on purpose</strong>The <code>.caf</code> files are the authoritative recording in the original format. The <code>.stream.pcm</code> files are a <em>durable queue</em> for transcription. If the queue is lost or damaged, <code>prepare-stream</code> (used by <code>trailmix retry</code>) rebuilds it from the CAF + timeline, and refuses if the rebuilt bytes would differ from what earlier transcripts already reference.</div>
+</section>
+
+<!-- 7 -->
+<section id="contracts">
+  <h2><span class="num">07</span>The contracts between pieces</h2>
+  <p class="why">If you change any of these, you're changing an interface another language depends on. These are the seams to be careful with.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Seam</th><th>Transport</th><th>Shape</th><th>Defined in</th></tr>
+    <tr><td><span class="lang swift">Swift</span> → <span class="lang go">Go</span> daemon</td><td>helper stdout</td><td>JSONL events: <code>started</code>, <code>progress</code>, <code>stopped</code>, <code>error</code>, <code>transcription_error</code></td><td><code>Capture.swift: emit</code> / <code>recorder.go: event</code></td></tr>
+    <tr><td><span class="lang go">Go</span> daemon → <span class="lang swift">Swift</span></td><td>helper stdin</td><td>EOF means stop</td><td><code>recorder.go: capture</code></td></tr>
+    <tr><td><span class="lang swift">Swift</span> → transcription</td><td>files</td><td><code>*.stream.pcm</code> + <code>*.stream.jsonl</code> rows <code>{offset, bytes, start_seconds, end_seconds, discontinuity}</code></td><td><code>StreamWriter</code> / <code>stream.go: row</code></td></tr>
+    <tr><td>CLI ↔ daemon</td><td><code>recorder.sock</code></td><td><code>{"command":"status"|"stop"}</code> → <code>status</code> JSON</td><td><code>client.go</code>, <code>recorder.go: serve</code></td></tr>
+    <tr><td><span class="lang go">CLI</span> → <span class="lang lua">Lua</span> / scripts</td><td>CLI stdout</td><td>One JSON object, always with <code>"schema_version": 1</code> first</td><td><code>cliout.go</code> / <code>cli.lua</code></td></tr>
+    <tr><td><span class="lang lua">Lua</span> → CLI (ask)</td><td>CLI stdin</td><td><code>{question, notes, note_path, selection}</code></td><td><code>answers.go: askInput</code> / <code>ask.lua</code></td></tr>
+    <tr><td>Note ↔ everything</td><td>Markdown text</td><td><code>&lt;!-- trailmix: meeting &lt;32 hex&gt; --&gt;</code> exactly once</td><td><code>workspace.go: newNote</code>, <code>note.lua</code></td></tr>
+  </table></div>
+<pre><span class="c">// cliout.go: the versioned-output rule, enforced in one place</span>
+<span class="k">const</span> SchemaVersion = 1   <span class="c">// bump when a field is removed or changes meaning</span>
+<span class="k">func</span> Write(w, v, indent) { ...prepend {"schema_version":1, ... }
+
+<span class="c">-- cli.lua: the plugin refuses any other version with a clear message</span>
+<span class="k">if</span> value.schema_version ~= M.schema_version <span class="k">then</span>
+  <span class="k">return nil</span>, "CLI output schema X does not match this plugin's 1; update ... together"</pre>
+</section>
+
+<!-- 8 -->
+<section id="transcription">
+  <h2><span class="num">08</span>Transcription pipeline</h2>
+  <p class="why">The most intricate Go package. Its core rule, from the package doc: <em>capture never calls into this package and never waits for the provider</em>.</p>
+
+  <figure>
+  <svg viewBox="0 0 960 200" role="img" aria-label="Transcription pipeline">
+    <defs><marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color: var(--muted)"/></marker></defs>
+    <g font-size="12">
+    <rect class="box swift" x="10" y="40" width="160" height="80" rx="10"/>
+    <text x="90" y="70" text-anchor="middle" font-weight="700" font-size="13">StreamWriter</text>
+    <text x="90" y="90" text-anchor="middle" class="muted">24 kHz mono Int16</text>
+    <text x="90" y="106" text-anchor="middle" class="muted">per track</text>
+    <path class="edge" d="M170,80 L200,80" marker-end="url(#arr3)"/>
+    <rect class="box store" x="200" y="40" width="160" height="80" rx="10"/>
+    <text x="280" y="70" text-anchor="middle" font-weight="700" font-size="13">PCM queue</text>
+    <text x="280" y="90" text-anchor="middle" class="muted">.stream.pcm</text>
+    <text x="280" y="106" text-anchor="middle" class="muted">.stream.jsonl</text>
+    <path class="edge" d="M360,80 L390,80" marker-end="url(#arr3)"/>
+    <rect class="box go" x="390" y="40" width="160" height="80" rx="10"/>
+    <text x="470" y="70" text-anchor="middle" font-weight="700" font-size="13">segmenter</text>
+    <text x="470" y="90" text-anchor="middle" class="muted">energy-based turns</text>
+    <text x="470" y="106" text-anchor="middle" class="muted">≤15 s, cut at 0.6 s quiet</text>
+    <path class="edge" d="M550,80 L580,80" marker-end="url(#arr3)"/>
+    <rect class="box go" x="580" y="40" width="160" height="80" rx="10"/>
+    <text x="660" y="70" text-anchor="middle" font-weight="700" font-size="13">provider</text>
+    <text x="660" y="90" text-anchor="middle" class="muted">append + commit</text>
+    <text x="660" y="106" text-anchor="middle" class="muted">over websocket</text>
+    <path class="edge" d="M740,80 L770,80" marker-end="url(#arr3)"/>
+    <rect class="box store" x="770" y="40" width="180" height="80" rx="10"/>
+    <text x="860" y="70" text-anchor="middle" font-weight="700" font-size="13">store</text>
+    <text x="860" y="90" text-anchor="middle" class="muted">*.turn.json (sent)</text>
+    <text x="860" y="106" text-anchor="middle" class="muted">*.passage.json (final)</text>
+    <text x="280" y="150" text-anchor="middle" class="muted">durable: Go can lag or restart</text>
+    <text x="660" y="150" text-anchor="middle" class="muted">deltas → "provisional" text</text>
+    <text x="660" y="166" text-anchor="middle" class="muted">finals may arrive out of order</text>
+    <text x="860" y="150" text-anchor="middle" class="muted">turn without passage =</text>
+    <text x="860" y="166" text-anchor="middle" class="muted">"incomplete range" → retry</text>
+    </g>
+  </svg>
+  <figcaption>One goroutine per track runs this chain. Each track has its own websocket to <code>wss://api.openai.com/v1/realtime?intent=transcription</code>.</figcaption>
+  </figure>
+
+<pre><span class="c">// stream.go: Runner.track(name), simplified</span>
+open timeline (.stream.jsonl) and audio (.stream.pcm)
+<span class="k">for</span> {
+    line := read next row        <span class="c">// at EOF: if capture finished, flush and return; else wait and retry</span>
+    pcm  := read row.Bytes from audio at row.Offset
+    seg.add(row, pcm)            <span class="c">// accumulates RMS energy, tracks silence</span>
+    ensureProvider()             <span class="c">// lazily connect; on failure mark track "degraded"</span>
+    provider.append(pcm)
+    <span class="k">if</span> seg.boundary() {         <span class="c">// ≥15s, or ≥0.1s with 0.6s of quiet</span>
+        turn := seg.take()
+        store.saveTurn(turn)     <span class="c">// written BEFORE commit, so it can be retried</span>
+        provider.commit(turn)    <span class="c">// pad to 100ms if short; provider replies later with text</span>
+    }
+    <span class="k">if</span> session older than 55 min { drain and reconnect }
+}</pre>
+  <p>Passage IDs are deterministic (<code>microphone-000000720368</code> = track + byte offset into the PCM queue), which is what lets <code>trailmix retry</code> replay only the turns that never received a final and dedupe against ones that did. <code>Finish()</code> gives in-flight network work at most 12 s after capture stops.</p>
+  <div class="grid3">
+    <div class="card"><strong>Track states</strong><br><span class="pill">streaming</span><span class="pill">degraded</span><span class="pill">interrupted</span><br><span class="muted" style="color:var(--muted);font-size:14px">A failed network never stops capture; the audio stays on disk.</span></div>
+    <div class="card"><strong>Cost tracking</strong><br><span style="color:var(--muted);font-size:14px"><code>submitted_seconds</code> and <code>estimated_usd</code> per track in <code>status.json</code>.</span></div>
+    <div class="card"><strong>Model</strong><br><span style="color:var(--muted);font-size:14px"><code>transcription.Model</code> in <code>store.go</code>; session config in <code>provider.go: connect</code>.</span></div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section id="storage">
+  <h2><span class="num">09</span>What lands on disk</h2>
+  <p class="why">Three places. Knowing them makes debugging much easier: you can just <code>cat</code> the state.</p>
+  <div class="grid2">
+<div class="card tree"><span class="d"># State: ~/Library/Application Support/TrailMix
+#   (or $TRAILMIX_HOME)</span>
+recorder.sock        <span class="d"># daemon's socket</span>
+recorder.lock        <span class="d"># held by the live daemon</span>
+workspace.lock       <span class="d"># serializes lifecycle cmds</span>
+last.json            <span class="d"># last status snapshot</span>
+latest-meeting.json  <span class="d"># what `open` reopens</span>
+meetings/&lt;id&gt;.json   <span class="d"># note path, tmux target,</span>
+                     <span class="d">#   recording dir</span>
+e-&lt;rand&gt;.sock        <span class="d"># nvim --listen sockets</span>
+launch-*.log         <span class="d"># daemon startup logs</span>
+recordings/&lt;ts&gt;-&lt;n&gt;/ <span class="d"># one per recording ↓</span></div>
+<div class="card tree"><span class="d"># A recording directory</span>
+capture.json           <span class="d"># mic id/name, clock origin</span>
+capture.log            <span class="d"># helper stderr</span>
+session.json           <span class="d"># recorder status</span>
+meeting.json           <span class="d"># meeting identity</span>
+microphone.caf         <span class="d"># original audio</span>
+microphone.timeline.jsonl
+microphone.stream.pcm  <span class="d"># 24k queue</span>
+microphone.stream.jsonl
+system.*               <span class="d"># same four for system</span>
+answers/&lt;answer-id&gt;/   <span class="d"># prompt.txt, runner.json,</span>
+                       <span class="d">#   answer.json per question</span>
+transcription/
+  status.json
+  &lt;track&gt;-&lt;offset&gt;.turn.json
+  &lt;track&gt;-&lt;offset&gt;.passage.json</div>
+  </div>
+  <p>And your notes: <code>~/Documents/TrailMix/YYYY-MM-DD/HH-MM-SS.md</code>, with sidecars <code>….transcript.md</code> (exported at stop) and <code>….answers.md</code> (AI answers) beside them. Settings live separately in <code>~/.config/trailmix/settings.json</code>, and the API key in its own credentials file under the same directory (<code>auth.go</code>).</p>
+</section>
+
+<!-- 10 -->
+<section id="navigation">
+  <h2><span class="num">10</span>tmux &amp; terminal navigation</h2>
+  <p class="why"><code>internal/navigation</code> gets your note on screen however TrailMix was launched: from inside tmux, from a hotkey with no terminal open, or with an editor already running.</p>
+  <ol class="steps">
+    <li><strong>Find or create the editor pane.</strong> List every tmux pane and look for one tagged with pane options <code>@trailmix_meeting</code> = this ID and <code>@trailmix_note</code> = this path that is still running nvim. Tags are used because tmux numeric IDs get recycled and titles change.</li>
+    <li><strong>If missing</strong>, <code>tmux new-session</code> (first meeting of the day) or <code>new-window</code> into <code>trailmix-YYYY-MM-DD</code>, exec'ing <code>nvim --listen &lt;socket&gt; -- note.md</code> with <code>TRAILMIX_CLI</code>/<code>TRAILMIX_HOME</code> in its env. Then set the three pane tags.</li>
+    <li><strong>If the pane exists</strong> but nvim switched to another buffer, use its <code>--listen</code> socket to show the note again (<code>showNote</code>), keeping any unsaved text.</li>
+    <li><strong>Get it on screen.</strong> If a tmux client is attached, <code>switch-client</code> to the target. If not, run <code>terminal.command</code> (default: AppleScript to Terminal.app) with <code>{tmux}</code>/<code>{target}</code>/<code>{dir}</code> filled in, and wait up to 6 s for a client to attach.</li>
+    <li><strong>Focus.</strong> Walk the tmux client's process ancestry up to the terminal app, then focus via Aerospace (exact window) or macOS app activation.</li>
+  </ol>
+  <p>Separately, <code>indicator.go</code> sets the tmux user option <code>@trailmix_rec</code> while recording, so a status-line snippet can call <code>trailmix status --tmux</code> to show <code>● 16:01</code>. Updates go out on their own goroutine and only the latest state is kept, so a hung tmux can't slow capture.</p>
+</section>
+
+<!-- 11 -->
+<section id="lua">
+  <h2><span class="num">11</span>Neovim plugin (Lua)</h2>
+  <p class="why">The plugin is a thin client. It never talks to the daemon or OpenAI directly: everything goes through <code>vim.system({cli, ...})</code> and parses the versioned JSON that comes back.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Module</th><th>Responsibility</th><th>CLI it calls</th></tr>
+    <tr><td><code>init.lua</code></td><td><code>setup(opts)</code>: user commands, keymaps (<code>&lt;leader&gt;mt</code>, <code>ma</code>, <code>mT</code>), timestamp insertion</td><td><code>status</code></td></tr>
+    <tr><td><code>note.lua</code></td><td>Find the single meeting ID marker in a buffer</td><td>—</td></tr>
+    <tr><td><code>cli.lua</code></td><td>Decode JSON, check <code>schema_version</code></td><td>—</td></tr>
+    <tr><td><code>anchors.lua</code></td><td>Find the <code>@MM:SS</code> anchor governing the cursor (skips code fences)</td><td>—</td></tr>
+    <tr><td><code>transcript.lua</code></td><td>Read-only transcript split; polls every 1 s; follow mode; keeps cursor stable on refresh</td><td><code>transcript --meeting ID --json</code></td></tr>
+    <tr><td><code>transcript_view.lua</code></td><td>Validate snapshot, render passages / provisional text / gaps</td><td>—</td></tr>
+    <tr><td><code>ask.lua</code></td><td>Prompt for a question, send note snapshot, show answers, follow citations</td><td><code>ask</code>, <code>answers</code></td></tr>
+    <tr><td><code>panel.lua</code></td><td>One managed right-hand window per tab shared by answers and transcript, plus a "back" history</td><td>—</td></tr>
+  </table></div>
+
+  <h3>Timestamp insertion: a good example of the plugin's style</h3>
+<pre><span class="k">function</span> M.add_timestamp()
+  id     = note.id(buffer)                     <span class="c">-- must have exactly one marker</span>
+  tick, cursor = changedtick, cursor position  <span class="c">-- snapshot the editing target</span>
+  autocmd on CursorMoved/TextChanged/BufLeave → canceled = true
+  vim.system({cli, "status"}, {timeout = 4000}, <span class="k">function</span>(result)
+    <span class="k">if</span> canceled or tick/cursor/buffer changed <span class="k">then</span> notify("canceled") <span class="k">return end</span>
+    state = cli.decode(result.stdout)
+    require state.live, state.state == "recording", state.meeting_id == id
+    require state.clock_age_seconds &lt;= 5        <span class="c">-- don't stamp a stale clock</span>
+    insert "@MM:SS" (or "@HH:MM:SS") above cursor
+  <span class="k">end</span>)
+<span class="k">end</span></pre>
+  <p>The pattern: async call, and if anything changed while waiting, give up rather than guess. You'll see the same approach in the transcript refresh, which validates the whole snapshot before touching the buffer so a bad refresh leaves the previous transcript in place.</p>
+</section>
+
+<!-- 12 -->
+<section id="ask">
+  <h2><span class="num">12</span>Ask &amp; citations</h2>
+  <p class="why">How a question in Neovim becomes a cited answer. This path crosses all three languages and an external AI tool.</p>
+  <ol class="steps">
+    <li><code>ask.lua</code> pipes <code>{"question", "notes", "note_path", "selection"}</code> into <code>trailmix ask --meeting ID</code>.</li>
+    <li><code>answers.go: ask</code> checks that the note snapshot carries this meeting's marker, reads the finalized transcript, and builds a prompt: fixed instructions plus a JSON blob of notes and passages (<code>questionPrompt</code>).</li>
+    <li><code>assistant.Run</code> launches the configured command (default <code>opencode run --format json --agent trailmix-ask</code>) with the prompt on stdin, in its own process group, with a timeout and a 4 MiB output cap. For OpenCode it injects a <strong>deny-all agent</strong> with a random name, so the assistant can't run tools or edit files.</li>
+    <li>The model is told to cite with <code>[[passage:ID]]</code>. <code>citeAnswer</code> rejects the answer if any cited ID isn't in the supplied evidence, then rewrites valid tokens into links like <code>[04:12](trailmix://meetings/&lt;id&gt;/passages/&lt;pid&gt;)</code>.</li>
+    <li>The answer is appended to the <code>.answers.md</code> sidecar beside the note, and the exact prompt, raw runner output, and an <code>answer.json</code> record are saved under <code>answers/&lt;answer-id&gt;/</code> in the recording directory. The result goes back to Neovim as JSON. <code>ask.lua</code> shows it in the panel; <code>gf</code> on a link opens the transcript at that passage.</li>
+  </ol>
+<pre><span class="c">// answers.go: citations are validated, not trusted</span>
+answer := citationToken.ReplaceAllStringFunc(text, <span class="k">func</span>(token) {
+    id := ...
+    label, ok := labels[id]           <span class="c">// only finalized, non-empty passages</span>
+    <span class="k">if</span> !ok { invalid = <span class="k">true</span> }
+    <span class="k">return</span> "[" + label + "](trailmix://meetings/" + meeting + "/passages/" + id + ")"
+})
+<span class="k">if</span> invalid { <span class="k">return</span> error("assistant cited a passage absent from the supplied finalized evidence") }</pre>
+</section>
+
+<!-- 13 -->
+<section id="patterns">
+  <h2><span class="num">13</span>Patterns you'll see everywhere</h2>
+  <p class="why">Once you recognize these, most of the "why is this so careful?" code makes sense. The codebase consistently assumes processes crash, users press hotkeys twice, and networks fail.</p>
+  <div class="grid2">
+    <div class="card"><strong>flock, not PID files</strong><br><code>recorder.lock</code>, <code>workspace.lock</code>, <code>capture.lock</code>, per-meeting <code>.artifacts.lock</code>. The kernel releases a flock when the process dies, so stale-lock cleanup is never needed.</div>
+    <div class="card"><strong>Atomic writes</strong><br>Write <code>path.tmp</code>, then <code>rename</code>. Readers never see half a JSON file (<code>saveStatus</code>, <code>meeting.WriteJSON</code>, <code>atomicJSON</code>).</div>
+    <div class="card"><strong>Never overwrite</strong><br><code>O_CREAT|O_EXCL</code> for notes, recording dirs, CAF files, logs. Collisions get a suffix or an error; nothing gets clobbered.</div>
+    <div class="card"><strong>Capture outranks everything</strong><br>Transcription, tmux indicators, navigation, and editors can all fail while recording continues. Errors are surfaced as <code>warnings</code> / <code>degraded</code> states, not crashes.</div>
+    <div class="card"><strong>Identity in the note</strong><br>The <code>&lt;!-- trailmix: meeting ID --&gt;</code> marker is how every component (Go, Lua, sidecars) agrees which meeting a buffer belongs to, even after restarts or midnight.</div>
+    <div class="card"><strong>Exec arrays, no shell</strong><br><code>terminal.command</code> and <code>assistant.command</code> are argv arrays with placeholder substitution. tmux is given multiple args so it execs directly with no shell parsing.</div>
+    <div class="card"><strong>Secrets stay narrow</strong><br><code>captureEnvironment()</code> strips <code>OPENAI_API_KEY</code> from the helper's env; websocket errors redact the key.</div>
+    <div class="card"><strong>Versioned JSON boundary</strong><br>Every CLI JSON document goes through <code>cliout</code>; the plugin checks the version. Adding fields is fine; removing or changing meaning bumps it.</div>
+  </div>
+</section>
+
+<!-- 14 -->
+<section id="tests">
+  <h2><span class="num">14</span>Tests &amp; CI</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Layer</th><th>How it's tested</th></tr>
+    <tr><td><span class="lang go">Go</span></td><td><code>*_test.go</code> beside each file, run with <code>-race</code>. <code>transcription_test.go</code> stands up a fake websocket server and writes synthetic PCM queues to test out-of-order finals, disconnects, retry dedupe, and session rollover. Recorder tests use a fake helper via <code>TRAILMIX_CAPTURE_HELPER</code>.</td></tr>
+    <tr><td><span class="lang swift">Swift</span></td><td><code>trailmix-capture self-test</code> pushes real PCM buffers through <code>TrackWriter</code>/<code>StreamWriter</code> without opening devices or prompting for permissions.</td></tr>
+    <tr><td><span class="lang lua">Lua</span></td><td><code>nvim --headless -u NONE -l tests/nvim/*.lua</code> with a stubbed CLI.</td></tr>
+    <tr><td>CI</td><td><code>.github/workflows/ci.yml</code> on <code>macos-15</code>: <code>gofmt</code>, <code>go vet</code>, <code>go mod verify</code>, <code>make test</code>. <code>release.yml</code> reruns CI on a tag, then <code>make dist</code>.</td></tr>
+  </table></div>
+  <div class="callout"><strong>What tests can't cover</strong>Real permission prompts, real devices, and long real calls. The README is upfront that short trials work end to end and long meetings have seen little use, so that's where to expect surprises.</div>
+</section>
+
+<!-- 15 -->
+<section id="reading">
+  <h2><span class="num">15</span>Suggested reading order</h2>
+  <p class="why">About two hours to read the important parts with this page open beside you.</p>
+  <ol class="reading">
+    <li><code>README.md</code> sections "Meeting workspace" and "Neovim companion", for the user-facing promises.</li>
+    <li><code>cmd/trailmix/main.go</code> → <code>internal/recorder/cli.go: Run</code>: the command map.</li>
+    <li><code>internal/recorder/workspace.go: workspace</code> and <code>newNote</code>: what <code>start</code> does.</li>
+    <li><code>internal/recorder/client.go</code>, then <code>recorder.go: serve</code> and <code>capture</code>: the daemon.</li>
+    <li><code>native/Capture.swift</code>: <code>CaptureMain.record</code> first, then <code>CaptureOutput</code>, <code>TrackWriter</code>, <code>StreamWriter</code>.</li>
+    <li><code>internal/transcription/stream.go: track</code> → <code>provider.go</code> → <code>store.go</code>.</li>
+    <li><code>lua/trailmix/init.lua</code>, then <code>transcript.lua</code> and <code>ask.lua</code>.</li>
+    <li><code>internal/recorder/answers.go</code> + <code>internal/assistant/runner.go</code>.</li>
+    <li><code>internal/navigation/navigation.go: Open</code> and <code>editor</code>, last, because it's the most environment-specific.</li>
+  </ol>
+  <div class="card">
+    <strong>Hands-on tip</strong>
+    <p style="margin:6px 0 0">Run a short <code>trailmix start</code>, then in another shell: <code>trailmix status | jq</code>, <code>ls "$(trailmix status | jq -r .directory)"</code>, and <code>tail -f …/microphone.stream.jsonl</code>. Watching the files grow while you talk shows the Swift → disk → Go hand-off directly.</p>
+  </div>
+</section>
+</main>
+</div>
+</body>
+</html>
