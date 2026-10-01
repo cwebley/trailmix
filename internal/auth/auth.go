@@ -16,6 +16,8 @@ import (
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
+
+	"github.com/cwebley/trailmix/internal/cliout"
 )
 
 type credentials struct {
@@ -269,10 +271,8 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(struct {
+	return cliout.JSON(struct {
 		Configured bool   `json:"configured"`
 		Path       string `json:"path"`
-	}{Configured: key != "", Path: path})
+	}{Configured: key != "", Path: path}, true)
 }

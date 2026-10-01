@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/cwebley/trailmix/internal/cliout"
 	"github.com/cwebley/trailmix/internal/meeting"
 )
 
@@ -154,12 +155,10 @@ func Run(args []string) error {
 		if err != nil {
 			return err
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(struct {
+		return cliout.JSON(struct {
 			Path string `json:"path"`
 			Settings
-		}{path, s})
+		}{path, s}, true)
 	}
 	if len(args) != 3 || args[0] != "set" {
 		return errors.New("usage: trailmix config [show | set notes_root|template|microphone|assistant.command|assistant.format|assistant.timeout_seconds|terminal.command|terminal.focus VALUE]; commands are JSON arrays")

@@ -22,8 +22,8 @@ vim.fn.setfperm(cli, "rwx------")
 require("trailmix").setup({ cli = cli, mapping = false, ask_mapping = "<F6>", transcript_refresh_ms = 100 })
 local citation = "[01:02](trailmix://meetings/" .. id .. "/passages/system-1)"
 local answer_text = marker .. "\n# AI answers\n\nThe review is tentative. " .. citation .. "\n"
-vim.fn.writefile({ vim.json.encode({ meeting_id = id, path = directory .. "/meeting.answers.md", answer_id = "answer-1", markdown = answer_text }) }, directory .. "/answers.json")
-vim.fn.writefile({ vim.json.encode({ meeting_id = id, duration_seconds = 120,
+vim.fn.writefile({ vim.json.encode({ schema_version = 1, meeting_id = id, path = directory .. "/meeting.answers.md", answer_id = "answer-1", markdown = answer_text }) }, directory .. "/answers.json")
+vim.fn.writefile({ vim.json.encode({ schema_version = 1, meeting_id = id, duration_seconds = 120,
   passages = { { id = "system-1", meeting_id = id, track = "system", start_seconds = 62, end_seconds = 65, text = "Friday is tentative." } },
   transcription = { meeting_id = id, state = "complete", tracks = { microphone = { state = "complete" }, system = { state = "complete" } } },
 }) }, directory .. "/transcript.json")
@@ -204,7 +204,7 @@ local ok, err = xpcall(function()
   local unrelated = vim.api.nvim_get_current_buf()
   vim.api.nvim_buf_set_lines(unrelated, 0, -1, false, { "keep this unsaved text" })
   vim.api.nvim_set_current_win(note_window)
-  vim.fn.writefile({ vim.json.encode({ meeting_id = id, path = directory .. "/meeting.answers.md", markdown = answer_text .. "\nRefreshed from disk\n" }) }, directory .. "/answers.json")
+  vim.fn.writefile({ vim.json.encode({ schema_version = 1, meeting_id = id, path = directory .. "/meeting.answers.md", markdown = answer_text .. "\nRefreshed from disk\n" }) }, directory .. "/answers.json")
   vim.cmd("TrailMixAnswers")
   wait_for(function() return vim.b[vim.api.nvim_win_get_buf(right)].trailmix_kind == "answers" end)
   assert(#vim.api.nvim_tabpage_list_wins(0) == 2, "enew stranded the right slot")

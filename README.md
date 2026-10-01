@@ -358,7 +358,7 @@ Retry waits for exclusive access to the recording through locks, reporting an er
 
 ## Scripting and output
 
-The Neovim companion drives the CLI, and scripts can do the same. Commands with machine-readable output print exactly one JSON document on stdout:
+The Neovim companion drives the CLI, and scripts can do the same. Commands with machine-readable output print exactly one JSON object on stdout. Its first field is `schema_version`:
 
 | Command | Stdout |
 | --- | --- |
@@ -367,13 +367,14 @@ The Neovim companion drives the CLI, and scripts can do the same. Commands with 
 | `transcript --json` | Finalized passages with transcription state (plain text without `--json`) |
 | `retry` | Final transcription state; the helper's repair progress goes to stderr |
 | `ask`, `answers` | The saved answers view |
-| `devices`, `auth status`, `config show`, `doctor --json` | Devices, credential presence, settings, or the check list |
+| `devices`, `auth status`, `config show` | Microphones, credential presence, or settings |
+| `doctor --json` | The check list, under `checks` |
 
 `status --tmux` and `version` print a plain line, and `auth`, `auth logout`, and plain `doctor` print text for people.
 
-Exit status is 0 or 1. Errors go to stderr, prefixed with `trailmix:`. Some commands print their JSON and still exit 1: `status`, `stop` and `record` when the session reports an error, `retry` when transcription remains incomplete, `doctor --json` when a check fails, and `devices` when the capture helper fails, as a `{"type":"error"}` object. The JSON then describes that failed state, so read stdout before treating a nonzero exit as "no result". Other failures print nothing on stdout.
+Exit status is 0 or 1. Errors go to stderr, prefixed with `trailmix:`. Some commands print their JSON and still exit 1: `status`, `stop`, `record`, `start` and `toggle` when the session reports an error; `start` and `toggle` also when capture does not reach `recording` or the editor cannot open; `retry` when transcription remains incomplete; and `doctor --json` when a check fails. The JSON then describes that failed state, so read stdout before treating a nonzero exit as "no result". Other failures print nothing on stdout.
 
-The JSON has no schema version yet. Use the CLI and plugin from the same checkout or release.
+`schema_version` is 1. It increases when a field is removed or changes meaning; new fields can appear without a change. The Neovim companion reads only its own version and reports a mismatch as "update the trailmix CLI and plugin together", so install both from the same checkout or release.
 
 ## Local files and timing
 

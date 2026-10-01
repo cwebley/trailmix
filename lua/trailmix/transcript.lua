@@ -166,13 +166,13 @@ refresh = function(view)
     vim.schedule(function()
       view.pending, view.process = false, nil
       if not valid(view) then return end
-      local decoded, snapshot = pcall(vim.json.decode, result.stdout or "")
-      local checked, problem = false, "invalid transcript response"
-      if decoded then checked, problem = pcall(display.validate, snapshot, view.id) end
+      local snapshot, problem = require("trailmix.cli").decode(result.stdout, "transcript")
+      local checked = false
+      if snapshot then checked, problem = pcall(display.validate, snapshot, view.id) end
       if result.code ~= 0 then
         view.failure = result.code == 124 and "request timed out" or vim.trim(result.stderr or "")
         if view.failure == "" then view.failure = "CLI exited with code " .. result.code end
-      elseif not decoded or not checked then
+      elseif not checked then
         view.failure = tostring(problem)
       else
         view.failure, view.snapshot, view.read = nil, snapshot, read

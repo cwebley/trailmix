@@ -61,9 +61,10 @@ function M.follow(opts, fallback)
 end
 
 local function decode(result, id)
-  local ok, value = pcall(vim.json.decode, result.stdout or "")
   if result.code ~= 0 then return nil, vim.trim(result.stderr or "") ~= "" and vim.trim(result.stderr) or ("command exited with code " .. result.code) end
-  if not ok or type(value) ~= "table" or value.meeting_id ~= id or type(value.markdown) ~= "string" or type(value.path) ~= "string" then
+  local value, problem = require("trailmix.cli").decode(result.stdout, "answers")
+  if not value then return nil, problem end
+  if value.meeting_id ~= id or type(value.markdown) ~= "string" or type(value.path) ~= "string" then
     return nil, "invalid or mismatched answers response"
   end
   return value

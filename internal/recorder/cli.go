@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cwebley/trailmix/internal/auth"
+	"github.com/cwebley/trailmix/internal/cliout"
 	"github.com/cwebley/trailmix/internal/settings"
 	"github.com/cwebley/trailmix/internal/transcription"
 )
@@ -83,10 +84,7 @@ func Run(args []string) error {
 		if len(args) != 1 {
 			return errors.New("usage: trailmix devices")
 		}
-		cmd := exec.Command(p.helper, "devices")
-		cmd.Env = captureEnvironment()
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		return cmd.Run()
+		return devicesCommand(p)
 	case "record", "_record":
 		return recordCommand(p, args)
 	case "transcript", "retry":
@@ -96,6 +94,30 @@ func Run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; see trailmix help", args[0])
 	}
+}
+
+// devicesCommand re-prints the helper's device list as versioned CLI output.
+// A helper failure is an ordinary error, not a JSON document on stdout.
+func devicesCommand(p paths) error {
+	cmd := exec.Command(p.helper, "devices")
+	cmd.Env = captureEnvironment()
+	cmd.Stderr = os.Stderr
+	data, runErr := cmd.Output()
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(data, &result); err != nil {
+		if runErr != nil {
+			return fmt.Errorf("capture helper: %w", runErr)
+		}
+		return errors.New("capture helper returned an invalid device list")
+	}
+	if runErr != nil {
+		var failure event
+		if json.Unmarshal(data, &failure) == nil && failure.Error != "" {
+			return errors.New(failure.Error)
+		}
+		return fmt.Errorf("capture helper: %w", runErr)
+	}
+	return cliout.JSON(result, true)
 }
 
 // recordCommand starts low-level capture, or serves it as the detached recorder.
@@ -239,7 +261,7 @@ func transcriptCommand(p paths, args []string) error {
 				fmt.Fprintln(os.Stderr, "Transcript export:", exportErr)
 			}
 		}
-		_ = json.NewEncoder(os.Stdout).Encode(state)
+		_ = cliout.JSON(state, false)
 		return err
 	}
 	snapshot, err := readTranscript(*output, meetingID)
@@ -258,7 +280,7 @@ func transcriptCommand(p paths, args []string) error {
 		fmt.Fprintln(os.Stderr, "Transcript exported to", path)
 	}
 	if asJSON {
-		return json.NewEncoder(os.Stdout).Encode(snapshot)
+		return cliout.JSON(snapshot, false)
 	}
 	passages, state := snapshot.Passages, snapshot.Transcription
 	fmt.Printf("Transcription: %s (%s)\n", state.State, state.Model)
@@ -329,9 +351,7 @@ func statusCommand(p paths, args []string) error {
 }
 
 func printStatus(s status) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(s); err != nil {
+	if err := cliout.JSON(s, true); err != nil {
 		return err
 	}
 	if s.Error != "" {

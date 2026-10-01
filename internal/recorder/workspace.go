@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cwebley/trailmix/internal/cliout"
 	"github.com/cwebley/trailmix/internal/meeting"
 	"github.com/cwebley/trailmix/internal/navigation"
 	"github.com/cwebley/trailmix/internal/settings"
@@ -292,7 +293,7 @@ func openNote(p paths, note meetingNote, s *status) error {
 	if s != nil {
 		return printStatus(*s)
 	}
-	return json.NewEncoder(os.Stdout).Encode(note)
+	return cliout.JSON(note, false)
 }
 
 func navigationError(note meetingNote, s *status, err error) error {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cwebley/trailmix/internal/assistant"
+	"github.com/cwebley/trailmix/internal/cliout"
 	"github.com/cwebley/trailmix/internal/meeting"
 	"github.com/cwebley/trailmix/internal/settings"
 )
@@ -68,7 +69,7 @@ func runAnswers(p paths, command string, args []string) error {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(view)
+		return cliout.JSON(view, false)
 	}
 	input := askInput{Question: *question}
 	if *question == "" {
@@ -88,7 +89,7 @@ func runAnswers(p paths, command string, args []string) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(view)
+	return cliout.JSON(view, false)
 }
 
 func readAnswers(note meetingNote) (answersView, error) {

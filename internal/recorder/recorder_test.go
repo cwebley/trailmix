@@ -83,6 +83,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stdout, `{"microphone":%q,"screen_capture":%s}`, os.Getenv("TRAILMIX_TEST_MIC_PERMISSION"), os.Getenv("TRAILMIX_TEST_SCREEN_PERMISSION"))
 		os.Exit(0)
 	}
+	if os.Getenv("TRAILMIX_TEST_HELPER") == "devices-failure" && len(os.Args) > 1 && os.Args[1] == "devices" {
+		_, _ = os.Stdout.WriteString(`{"type":"error","error":"no audio devices"}` + "\n")
+		os.Exit(1)
+	}
 	if os.Getenv("TRAILMIX_TEST_HELPER") != "" && len(os.Args) > 1 && os.Args[1] == "devices" {
 		_, _ = os.Stdout.WriteString(`{"microphones":[{"id":"test-mic","name":"Test microphone","default":true}]}`)
 		os.Exit(0)

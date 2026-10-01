@@ -23,7 +23,7 @@ vim.notify = function(message) notices[#notices + 1] = message end
 
 local function response(passages, overrides)
   local snapshot = vim.tbl_extend("force", {
-    meeting_id = id, duration_seconds = 120,
+    schema_version = 1, meeting_id = id, duration_seconds = 120,
     passages = passages or {
       { id = "microphone-first", meeting_id = id, track = "microphone", start_seconds = 58, end_seconds = 63, text = "When is the review?" },
       { id = "system-later", meeting_id = id, track = "system", start_seconds = 62, end_seconds = 65, text = "Friday is tentative." },
@@ -179,6 +179,10 @@ local ok, err = xpcall(function()
   vim.env.TRAILMIX_TEST_EXIT = "0"
   vim.fn.writefile({ "{broken" }, directory .. "/response.json")
   wait_for(function() return text(transcript):find("invalid transcript response", 1, true) end)
+  -- A CLI from another release names the mismatch instead of a generic error.
+  response(nil, { schema_version = 2 })
+  wait_for(function() return text(transcript):find("update the trailmix CLI and plugin together", 1, true) end, "schema mismatch not explained")
+  assert(text(transcript):find("Friday is tentative.", 1, true), "schema mismatch discarded evidence")
   response()
   wait_for(function() return not text(transcript):find("Refresh failed:", 1, true) end)
 

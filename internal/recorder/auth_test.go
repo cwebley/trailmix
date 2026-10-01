@@ -94,7 +94,7 @@ func TestDetachedRecordingAndRetryUseXDGCredentials(t *testing.T) {
 	_ = retry.Run()
 	decoder := json.NewDecoder(&stdout)
 	var retried map[string]any
-	if err := decoder.Decode(&retried); err != nil || retried["meeting_id"] == nil || decoder.More() {
+	if err := decoder.Decode(&retried); err != nil || retried["meeting_id"] == nil || retried["schema_version"] != float64(1) || decoder.More() {
 		t.Fatalf("retry stdout is not one transcription state: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "prepared_stream") {

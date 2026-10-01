@@ -28,7 +28,7 @@ local function prepare(overrides)
   vim.env.TRAILMIX_TEST_DELAY = "0.08"
   vim.env.TRAILMIX_TEST_EXIT = "0"
   vim.env.TRAILMIX_TEST_STATUS = vim.json.encode(vim.tbl_extend("force", {
-    meeting_id = id, state = "recording", live = true, elapsed_seconds = 62.9, clock_age_seconds = 0.1,
+    schema_version = 1, meeting_id = id, state = "recording", live = true, elapsed_seconds = 62.9, clock_age_seconds = 0.1,
   }, overrides or {}))
 end
 
@@ -59,7 +59,7 @@ local ok, err = xpcall(function()
   for _, state in ipairs({
     { live = false }, { state = "stopped" }, { state = "starting" },
     { meeting_id = "another-meeting" }, { elapsed_seconds = -1 }, { error = "capture failed" },
-    { clock_age_seconds = 8 },
+    { clock_age_seconds = 8 }, { schema_version = 2 },
   }) do
     prepare(state)
     plugin.add_timestamp()

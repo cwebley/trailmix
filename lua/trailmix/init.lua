@@ -46,8 +46,12 @@ function M.add_timestamp()
         notify("timestamp canceled because the editing target changed")
         return
       end
-      local ok, state = pcall(vim.json.decode, result.stdout or "")
-      if result.code ~= 0 or not ok or type(state) ~= "table" or state.live ~= true
+      local state, problem = require("trailmix.cli").decode(result.stdout, "status")
+      if result.code == 0 and not state then
+        notify(problem)
+        return
+      end
+      if result.code ~= 0 or state.live ~= true
         or state.state ~= "recording" or state.meeting_id ~= id or (state.error and state.error ~= "") then
         notify("the same meeting must be actively recording through a reachable recorder")
         return

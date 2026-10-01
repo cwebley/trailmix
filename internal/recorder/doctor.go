@@ -14,6 +14,7 @@ import (
 
 	"github.com/cwebley/trailmix/internal/assistant"
 	"github.com/cwebley/trailmix/internal/auth"
+	"github.com/cwebley/trailmix/internal/cliout"
 	"github.com/cwebley/trailmix/internal/navigation"
 	"github.com/cwebley/trailmix/internal/settings"
 )
@@ -233,9 +234,9 @@ func doctor(p paths, args []string) error {
 		}
 	}
 	if asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(checks); err != nil {
+		if err := cliout.JSON(struct {
+			Checks []check `json:"checks"`
+		}{checks}, true); err != nil {
 			return err
 		}
 	} else {
