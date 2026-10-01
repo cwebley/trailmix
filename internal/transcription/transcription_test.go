@@ -450,3 +450,54 @@ func TestIdleSessionRetiresBeforeMoreSpeech(t *testing.T) {
 		t.Fatalf("idle rollover dropped partial speech: %+v %+v %v", passages, state, err)
 	}
 }
+
+// A provider may stream text for audio the local detector then clears as
+// silence. That text has no committed item to finalize it, so clearing must
+// retire it; otherwise it accumulates until the provisional limit degrades.
+func TestClearedSilenceRetiresProvisionalText(t *testing.T) {
+	var clears atomic.Int32
+	url := testServer(t, func(c *websocket.Conn) {
+		for {
+			var e map[string]any
+			if c.ReadJSON(&e) != nil {
+				return
+			}
+			switch e["type"] {
+			case "input_audio_buffer.append":
+				_ = c.WriteJSON(map[string]any{"type": "conversation.item.input_audio_transcription.delta", "item_id": fmt.Sprintf("noise-%d", clears.Load()), "delta": "hm "})
+			case "input_audio_buffer.clear":
+				clears.Add(1)
+			case "input_audio_buffer.commit":
+				_ = c.WriteJSON(map[string]any{"type": "input_audio_buffer.committed", "item_id": "speech"})
+				_ = c.WriteJSON(map[string]any{"type": "conversation.item.input_audio_transcription.completed", "item_id": "speech", "transcript": "real words"})
+			}
+		}
+	})
+	dir := t.TempDir()
+	q := queue(t, dir, "microphone")
+	queue(t, dir, "system")
+	r, err := start(dir, "test-key", url, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Finish() })
+	at := 0.0
+	for i := 0; i < 40; i++ {
+		q.chunk(t, at, .7, false, false)
+		at += .7
+	}
+	await(t, func() bool { return clears.Load() >= 39 || r.Snapshot().Tracks["microphone"].State == "degraded" })
+	state := r.Snapshot()
+	if track := state.Tracks["microphone"]; track.State == "degraded" || len(track.Provisional) > 1 {
+		t.Fatalf("cleared silence left provisional text: %d items, state %s %q", len(track.Provisional), track.State, track.Error)
+	}
+	q.chunk(t, at, .5, true, false)
+	q.chunk(t, at+.5, .7, false, false)
+	if err := r.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	passages, final, err := Read(dir)
+	if err != nil || len(passages) != 1 || passages[0].Text != "real words" || len(final.Tracks["microphone"].Provisional) != 0 {
+		t.Fatalf("speech after cleared silence: %+v %+v %v", passages, final, err)
+	}
+}

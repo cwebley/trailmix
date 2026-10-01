@@ -106,11 +106,7 @@ func (r *Runner) Snapshot() Status { return r.store.snapshot() }
 // Capture timestamps determine evidence. This monotonic local estimate is used
 // only for latency measurements; helper-to-Go delivery adds a small uncertainty.
 func (r *Runner) CaptureClock(elapsed float64) {
-	r.store.mu.Lock()
-	defer r.store.mu.Unlock()
-	if r.store.origin.IsZero() {
-		r.store.origin = time.Now().Add(-time.Duration(elapsed * float64(time.Second)))
-	}
+	r.store.startClock(elapsed)
 }
 
 func (r *Runner) Fail(err error) {
@@ -131,9 +127,7 @@ func (r *Runner) Finish() error {
 		<-r.done
 		timer.Stop()
 		r.cancel()
-		r.store.mu.Lock()
-		r.store.finalizationSeconds = time.Since(started).Seconds()
-		r.store.mu.Unlock()
+		r.store.finalizedIn(time.Since(started).Seconds())
 		r.finishErr = r.Persist()
 		r.store.guard.Close()
 	})
@@ -173,14 +167,7 @@ func (r *Runner) stopped() bool {
 // reached the segmenter. Report its capture range without writing thousands of
 // turn files after cancellation. Retry will segment it normally.
 func (r *Runner) retainUnread(name string) {
-	r.store.mu.Lock()
-	var consumed int64
-	for _, turn := range r.store.turns {
-		if turn.Track == name {
-			consumed = max(consumed, turn.Offset+turn.Bytes)
-		}
-	}
-	r.store.mu.Unlock()
+	consumed, start := r.store.segmented(name)
 	f, err := os.Open(filepath.Join(r.dir, name+".stream.jsonl"))
 	var remaining Range
 	if err == nil {
@@ -213,14 +200,6 @@ func (r *Runner) retainUnread(name string) {
 			}
 		}
 		if remaining.ID == "" {
-			r.store.mu.Lock()
-			var start float64
-			for _, turn := range r.store.turns {
-				if turn.Track == name {
-					start = max(start, turn.End)
-				}
-			}
-			r.store.mu.Unlock()
 			if end > start+0.002 {
 				remaining = Range{ID: name + "-unprocessed", Track: name, Offset: consumed, Start: start, End: end}
 			}
@@ -229,9 +208,7 @@ func (r *Runner) retainUnread(name string) {
 		}
 	}
 	if remaining.ID != "" {
-		r.store.mu.Lock()
-		r.store.active[name] = remaining
-		r.store.mu.Unlock()
+		r.store.setActive(name, remaining)
 	}
 }
 
@@ -424,9 +401,7 @@ func (r *Runner) track(name string) error {
 			skipping = r.store.completed(fmt.Sprintf("%s-%012d", name, row.Offset))
 		}
 		seg.add(name, row, pcm)
-		r.store.mu.Lock()
-		r.store.active[name] = seg.current.Range
-		r.store.mu.Unlock()
+		r.store.setActive(name, seg.current.Range)
 		if !skipping && ensureProvider() {
 			if err := p.append(pcm); err != nil {
 				failNetwork(err)

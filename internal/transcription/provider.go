@@ -140,11 +140,7 @@ func (p *provider) append(pcm []byte) error {
 	if err := p.write(map[string]any{"type": "input_audio_buffer.append", "audio": base64.StdEncoding.EncodeToString(pcm)}); err != nil {
 		return err
 	}
-	p.store.mu.Lock()
-	t := p.store.tracks[p.track]
-	t.SubmittedSeconds += float64(len(pcm)) / 48000
-	p.store.tracks[p.track] = t
-	p.store.mu.Unlock()
+	p.store.addSubmitted(p.track, float64(len(pcm))/48000)
 	return nil
 }
 
@@ -153,7 +149,14 @@ func (p *provider) commit(t turn) error {
 		return err
 	}
 	if t.Silence {
-		return p.write(map[string]any{"type": "input_audio_buffer.clear"})
+		if err := p.write(map[string]any{"type": "input_audio_buffer.clear"}); err != nil {
+			return err
+		}
+		// Text streamed for the cleared audio has no item left to finalize it.
+		p.mu.Lock()
+		p.retireUncommitted()
+		p.mu.Unlock()
+		return nil
 	}
 	p.mu.Lock()
 	p.waiting = &pendingTurn{t, time.Now()}
@@ -210,6 +213,9 @@ func (p *provider) handle(e serverEvent) error {
 			}
 		}
 		delete(p.early, e.ItemID)
+		// Commits are sequential, so any other unbound text belongs to audio
+		// that was cleared, including deltas that arrived after the clear.
+		p.retireUncommitted()
 		p.ack <- struct{}{}
 	case "conversation.item.input_audio_transcription.delta", "conversation.item.input_audio_transcription.completed":
 		if e.ItemID == "" {
@@ -220,15 +226,7 @@ func (p *provider) handle(e serverEvent) error {
 			if p.seen[e.ItemID] && !ok {
 				return nil
 			}
-			p.store.mu.Lock()
-			texts := p.store.tracks[p.track].Provisional
-			if len(texts) > 32 || len(texts[e.ItemID])+len(e.Delta) > 1024*1024 {
-				p.store.mu.Unlock()
-				return errors.New("provisional transcript exceeded limit")
-			}
-			texts[e.ItemID] += e.Delta
-			p.store.mu.Unlock()
-			return nil
+			return p.store.addProvisional(p.track, e.ItemID, e.Delta)
 		}
 		if !ok {
 			if p.seen[e.ItemID] {
@@ -248,6 +246,15 @@ func (p *provider) handle(e serverEvent) error {
 		}
 	}
 	return nil
+}
+
+// retireUncommitted drops provisional text not bound to a committed item.
+// Callers hold p.mu.
+func (p *provider) retireUncommitted() {
+	p.store.retireProvisional(p.track, func(item string) bool {
+		_, ok := p.items[item]
+		return ok
+	})
 }
 
 func (p *provider) drain(ctx context.Context) error {
@@ -275,9 +282,5 @@ func (p *provider) close() {
 	p.stopCancel()
 	p.conn.Close()
 	<-p.done
-	p.store.mu.Lock()
-	t := p.store.tracks[p.track]
-	t.Provisional = map[string]string{}
-	p.store.tracks[p.track] = t
-	p.store.mu.Unlock()
+	p.store.retireProvisional(p.track, func(string) bool { return false })
 }

@@ -206,6 +206,74 @@ func (s *store) finalize(t turn, e serverEvent, session string, committed time.T
 	return nil
 }
 
+// addSubmitted counts audio sent to the provider, for the cost estimate.
+func (s *store) addSubmitted(track string, seconds float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.tracks[track]
+	t.SubmittedSeconds += seconds
+	s.tracks[track] = t
+}
+
+// addProvisional appends live text for a provider item. It is bounded because
+// only a final or retireProvisional removes it.
+func (s *store) addProvisional(track, item, delta string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	texts := s.tracks[track].Provisional
+	if len(texts) > 32 || len(texts[item])+len(delta) > 1024*1024 {
+		return errors.New("provisional transcript exceeded limit")
+	}
+	texts[item] += delta
+	return nil
+}
+
+// retireProvisional drops live text for items that keep rejects.
+func (s *store) retireProvisional(track string, keep func(item string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for item := range s.tracks[track].Provisional {
+		if !keep(item) {
+			delete(s.tracks[track].Provisional, item)
+		}
+	}
+}
+
+// setActive reports the turn still being segmented as pending evidence.
+func (s *store) setActive(track string, r Range) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active[track] = r
+}
+
+// startClock anchors latency measurements to the first capture timestamp.
+func (s *store) startClock(elapsed float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.origin.IsZero() {
+		s.origin = time.Now().Add(-time.Duration(elapsed * float64(time.Second)))
+	}
+}
+
+func (s *store) finalizedIn(seconds float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finalizationSeconds = seconds
+}
+
+// segmented reports how far a track's saved turns reach, in queue bytes and
+// capture time.
+func (s *store) segmented(track string) (offset int64, end float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, turn := range s.turns {
+		if turn.Track == track {
+			offset, end = max(offset, turn.Offset+turn.Bytes), max(end, turn.End)
+		}
+	}
+	return offset, end
+}
+
 func (s *store) completed(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
