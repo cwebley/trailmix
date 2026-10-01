@@ -167,7 +167,7 @@ local ok, err = xpcall(function()
   vim.cmd("TrailMixAsk")
   wait_for(function() return text(answer_buffer):find("Working…", 1, true) end)
   vim.cmd("TrailMixAskCancel")
-  wait_for(function() return text(answer_buffer):find("request cancelled", 1, true) end)
+  wait_for(function() return text(answer_buffer):find("request canceled", 1, true) end)
   assert(text(note) == original)
 
   -- Reading saved answers works after wiping the cached view, and untimestamped

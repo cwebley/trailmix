@@ -28,22 +28,22 @@ function M.add_timestamp()
   end
   local tick = vim.api.nvim_buf_get_changedtick(buffer)
   local cursor = vim.api.nvim_win_get_cursor(window)
-  local cancelled = false
+  local canceled = false
   -- Even switching away and back cancels the insertion. No extmark relocation
   -- or changed-text guesswork: the user can request another timestamp.
   local autocmd = vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave", "CursorMoved", "CursorMovedI", "TextChanged", "TextChangedI" }, {
-    callback = function() cancelled = true end,
+    callback = function() canceled = true end,
   })
   pending = true
   local function finish(result)
     vim.schedule(function()
       pending = false
       vim.api.nvim_del_autocmd(autocmd)
-      if cancelled or not vim.api.nvim_buf_is_valid(buffer) or not vim.api.nvim_win_is_valid(window)
+      if canceled or not vim.api.nvim_buf_is_valid(buffer) or not vim.api.nvim_win_is_valid(window)
         or vim.api.nvim_get_current_buf() ~= buffer or vim.api.nvim_get_current_win() ~= window
         or vim.api.nvim_buf_get_changedtick(buffer) ~= tick or meeting_id(buffer) ~= id
         or not vim.deep_equal(vim.api.nvim_win_get_cursor(window), cursor) or not vim.bo[buffer].modifiable then
-        notify("timestamp cancelled because the editing target changed")
+        notify("timestamp canceled because the editing target changed")
         return
       end
       local ok, state = pcall(vim.json.decode, result.stdout or "")

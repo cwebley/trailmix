@@ -117,7 +117,7 @@ local function submit(opts, id, source, question, selection)
       if requests[id] ~= token then return end
       requests[id] = nil
       local value, err = decode(result, id)
-      if token.cancelled then value, err = nil, "request cancelled" end
+      if token.canceled then value, err = nil, "request canceled" end
       local target = buffers[id]
       if value then
         display(target, value)
@@ -154,7 +154,7 @@ function M.ask(opts, selection)
       if not vim.api.nvim_buf_is_valid(buffer) or not vim.api.nvim_win_is_valid(window)
         or vim.api.nvim_get_current_win() ~= window or vim.api.nvim_get_current_buf() ~= buffer
         or note.id(buffer) ~= id or vim.api.nvim_buf_get_name(buffer) ~= path then
-        notify("ask cancelled because the source note changed"); return
+        notify("ask canceled because the source note changed"); return
       end
       submit(opts, id, { path = path, text = table.concat(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), "\n") .. "\n" }, vim.trim(question), selection or "")
     end)
@@ -173,7 +173,7 @@ function M.cancel()
   local id = identity()
   local request = id and requests[id]
   if not request or not request.asking then notify("no assistant request is pending for this meeting"); return end
-  request.cancelled = true
+  request.canceled = true
   if request.process then request.process:kill(15) end
 end
 

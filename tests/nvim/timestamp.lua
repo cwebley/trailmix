@@ -94,7 +94,7 @@ local ok, err = xpcall(function()
   assert(vim.api.nvim_buf_line_count(0) == 1)
   assert(vim.api.nvim_buf_line_count(original) == 3)
 
-  -- Returning to the same buffer does not revive a cancelled insertion.
+  -- Returning to the same buffer does not revive a canceled insertion.
   prepare()
   original = vim.api.nvim_get_current_buf()
   plugin.add_timestamp()
