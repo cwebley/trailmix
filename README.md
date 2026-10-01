@@ -214,7 +214,7 @@ The default uses your existing OpenCode installation, provider configuration, an
 }
 ```
 
-For OpenCode, TrailMix injects a process-local `trailmix-ask` agent with tools disabled and sharing disabled. It does not install or modify OpenCode configuration files. The subprocess runs in its private request directory with the full prompt on stdin, avoiding attachment-reader truncation. OpenCode's existing model/provider settings determine billing and subscription use. Its JSON error events are checked even when the command exits with code zero. The launcher checks PATH, then `~/.opencode/bin`, `/opt/homebrew/bin`, and `/usr/local/bin` for the default executable.
+For OpenCode, TrailMix injects a process-local agent with tools disabled and sharing disabled. Each request gives it a fresh name and rewrites `--agent trailmix-ask` to select it, so an agent of the same name in your OpenCode configuration cannot merge in extra permissions. It does not install or modify OpenCode configuration files. The subprocess runs in its private request directory with the full prompt on stdin, avoiding attachment-reader truncation. OpenCode's existing model/provider settings determine billing and subscription use. Its JSON error events are checked even when the command exits with code zero. The launcher checks PATH, then `~/.opencode/bin`, `/opt/homebrew/bin`, and `/usr/local/bin` for the default executable.
 
 To use another headless CLI, point TrailMix at a command or wrapper that reads the composed prompt from stdin, returns only a Markdown answer on stdout, sends diagnostics to stderr, and exits nonzero on failure:
 

@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,17 +79,16 @@ func Run(ctx context.Context, cfg settings.Assistant, directory, prompt string) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, program, cfg.Command[1:]...)
-	cmd.Dir = directory
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Env = os.Environ()
+	args, env := cfg.Command[1:], os.Environ()
 	if cfg.Format == "opencode-json" {
-		env, err := openCodeEnvironment()
-		if err != nil {
+		if args, env, err = openCodeCommand(args); err != nil {
 			return result, err
 		}
-		cmd.Env = env
 	}
+	cmd := exec.CommandContext(ctx, program, args...)
+	cmd.Dir = directory
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Env = env
 	// Cancel the whole subprocess group, including wrapper scripts and children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
@@ -124,20 +125,36 @@ func Run(ctx context.Context, cfg settings.Assistant, directory, prompt string) 
 	return result, nil
 }
 
-func openCodeEnvironment() ([]string, error) {
-	// A per-process overlay keeps provider/auth settings, without installing or
-	// modifying any of the user's OpenCode files. All context arrives on stdin.
+// openCodeCommand points --agent trailmix-ask at a deny-all agent defined in a
+// per-process overlay. It keeps provider/auth settings, without installing or
+// modifying any of the user's OpenCode files. All context arrives on stdin.
+func openCodeCommand(args []string) ([]string, []string, error) {
+	// OpenCode deep-merges agents by name, so a user-defined trailmix-ask could
+	// add allowances after our deny. A fresh name per request cannot collide.
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return nil, nil, err
+	}
+	name := "trailmix-ask-" + hex.EncodeToString(suffix)
+	args = append([]string(nil), args...)
+	for i, arg := range args {
+		if arg == "--agent=trailmix-ask" {
+			args[i] = "--agent=" + name
+		} else if arg == "trailmix-ask" && i > 0 && args[i-1] == "--agent" {
+			args[i] = name
+		}
+	}
 	config := map[string]any{}
 	if prior := os.Getenv("OPENCODE_CONFIG_CONTENT"); prior != "" {
 		if err := json.Unmarshal([]byte(prior), &config); err != nil || config == nil {
-			return nil, errors.New("invalid inherited OPENCODE_CONFIG_CONTENT")
+			return nil, nil, errors.New("invalid inherited OPENCODE_CONFIG_CONTENT")
 		}
 	}
 	agents, _ := config["agent"].(map[string]any)
 	if agents == nil {
 		agents = map[string]any{}
 	}
-	agents["trailmix-ask"] = map[string]any{
+	agents[name] = map[string]any{
 		"description": "Answer from the supplied meeting context",
 		"mode":        "primary", "permission": map[string]string{"*": "deny"},
 		"prompt": "Answer the supplied meeting question in Markdown. Use only the supplied context; do not use tools. Follow the requested citation format.",
@@ -145,7 +162,7 @@ func openCodeEnvironment() ([]string, error) {
 	config["agent"], config["share"] = agents, "disabled"
 	encoded, err := json.Marshal(config)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var env []string
 	for _, value := range os.Environ() {
@@ -153,7 +170,7 @@ func openCodeEnvironment() ([]string, error) {
 			env = append(env, value)
 		}
 	}
-	return append(env, "OPENCODE_CONFIG_CONTENT="+string(encoded), "OPENCODE_DISABLE_PROJECT_CONFIG=1"), nil
+	return args, append(env, "OPENCODE_CONFIG_CONTENT="+string(encoded), "OPENCODE_DISABLE_PROJECT_CONFIG=1"), nil
 }
 
 func decodeOpenCode(data []byte) (string, error) {
