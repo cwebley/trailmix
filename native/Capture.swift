@@ -16,12 +16,24 @@ func jsonLine(_ value: [String: Any]) throws -> Data {
     return data
 }
 
+// Set while recording. Guarded by outputLock, like stdoutLost.
+nonisolated(unsafe) var onParentLost: (() -> Void)?
+nonisolated(unsafe) var stdoutLost = false
+let outputLock = NSLock()
+
 func emit(_ value: [String: Any]) {
+    outputLock.lock()
+    defer { outputLock.unlock() }
+    guard !stdoutLost else { return }
     do {
         try FileHandle.standardOutput.write(contentsOf: jsonLine(value))
     } catch {
-        // A lost parent must not leave an invisible recording running.
-        exit(1)
+        // A lost parent must not leave an invisible recording running. While
+        // recording, stop through normal finalization instead of exiting with
+        // the CAF header, journal and resampler tail unfinished.
+        stdoutLost = true
+        guard let stop = onParentLost else { exit(1) }
+        stop()
     }
 }
 
@@ -385,6 +397,8 @@ final class CaptureOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 @main
 struct CaptureMain {
     static func main() async {
+        // Report a closed stdout as a write error to emit, not a fatal signal.
+        signal(SIGPIPE, SIG_IGN)
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             switch args.first {
@@ -563,6 +577,8 @@ struct CaptureMain {
             "system_scope": "all system audio except capture helper",
         ]))
         try metadata.close()
+        outputLock.withLock { onParentLost = { stops.continuation.yield(()) } }
+        defer { outputLock.withLock { onParentLost = nil } }
         try await stream.startCapture()
         output.queue.sync { output.report("started") }
         let timer = DispatchSource.makeTimerSource(queue: output.queue)
@@ -703,6 +719,27 @@ struct CaptureMain {
         try prepareStream(directory: failureDirectory)
         let recovered = try Data(contentsOf: failureDirectory.appendingPathComponent("microphone.stream.pcm"))
         guard recovered == localBytes else { throw CaptureError("Queue failure prevented recovery from original CAF") }
+
+        // A recorder that dies closes the reader of stdout. The next event must
+        // request a normal stop, not end the helper before its files finalize.
+        var ends: [Int32] = [0, 0]
+        guard pipe(&ends) == 0 else { throw CaptureError("Cannot create test pipe") }
+        close(ends[0])
+        let savedOutput = dup(STDOUT_FILENO)
+        dup2(ends[1], STDOUT_FILENO)
+        close(ends[1])
+        final class Flag: @unchecked Sendable { var raised = false }
+        let stopRequested = Flag()
+        outputLock.withLock { onParentLost = { stopRequested.raised = true } }
+        emit(["type": "progress"])
+        emit(["type": "progress"])
+        dup2(savedOutput, STDOUT_FILENO)
+        close(savedOutput)
+        let lost = outputLock.withLock {
+            defer { onParentLost = nil; stdoutLost = false }
+            return stdoutLost
+        }
+        guard stopRequested.raised, lost else { throw CaptureError("Lost parent did not request a normal stop") }
 
         // A crash between a CAF write and its timing row leaves a journal cut at
         // a line boundary. Retry must refuse it rather than omit the audio.
