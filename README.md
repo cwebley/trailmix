@@ -356,6 +356,25 @@ Retry waits for exclusive access to the recording through locks, reporting an er
 - The [model page](https://developers.openai.com/api/docs/models/gpt-live-transcribe) lists $0.017 per input audio minute and rate limits for paid tiers. Two continuously submitted tracks estimate to $2.04 per meeting hour, before retry overhead. Local duration-based estimates and provider usage are retained; neither is a verified invoice total.
 - The [Realtime lifecycle guide](https://developers.openai.com/api/docs/guides/realtime-conversations) gives a general 60-minute session limit. TrailMix also respects an earlier returned `expires_at`. Hosted session rollover remains untested.
 
+## Scripting and output
+
+The Neovim companion drives the CLI, and scripts can do the same. Commands with machine-readable output print exactly one JSON document on stdout:
+
+| Command | Stdout |
+| --- | --- |
+| `status`, `stop`, `record` | Recording status |
+| `start`, `toggle`, `open` | Recording status, or the meeting association when nothing is recording |
+| `transcript --json` | Finalized passages with transcription state (plain text without `--json`) |
+| `retry` | Final transcription state; the helper's repair progress goes to stderr |
+| `ask`, `answers` | The saved answers view |
+| `devices`, `auth status`, `config show`, `doctor --json` | Devices, credential presence, settings, or the check list |
+
+`status --tmux` and `version` print a plain line, and `auth`, `auth logout`, and plain `doctor` print text for people.
+
+Exit status is 0 or 1. Errors go to stderr, prefixed with `trailmix:`. Some commands print their JSON and still exit 1: `status`, `stop` and `record` when the session reports an error, `retry` when transcription remains incomplete, `doctor --json` when a check fails, and `devices` when the capture helper fails, as a `{"type":"error"}` object. The JSON then describes that failed state, so read stdout before treating a nonzero exit as "no result". Other failures print nothing on stdout.
+
+The JSON has no schema version yet. Use the CLI and plugin from the same checkout or release.
+
 ## Local files and timing
 
 By default, recordings live under `~/Library/Application Support/TrailMix/recordings/`. Every recording has its own directory, printed by the CLI.

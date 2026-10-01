@@ -75,6 +75,10 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(1)
 	}
+	if os.Getenv("TRAILMIX_TEST_HELPER") != "" && len(os.Args) > 1 && os.Args[1] == "prepare-stream" {
+		_, _ = os.Stdout.WriteString(`{"prepared_stream":true}` + "\n")
+		os.Exit(0)
+	}
 	if os.Getenv("TRAILMIX_TEST_HELPER") != "" && len(os.Args) > 1 && os.Args[1] == "permissions" {
 		fmt.Fprintf(os.Stdout, `{"microphone":%q,"screen_capture":%s}`, os.Getenv("TRAILMIX_TEST_MIC_PERMISSION"), os.Getenv("TRAILMIX_TEST_SCREEN_PERMISSION"))
 		os.Exit(0)

@@ -1,6 +1,8 @@
 package recorder
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,6 +80,26 @@ func TestDetachedRecordingAndRetryUseXDGCredentials(t *testing.T) {
 		}
 	}
 	stopRecorder()
+	// Retry prints exactly one JSON document on stdout. The helper's repair
+	// output is progress for stderr. The fake recording has no queues to replay,
+	// and the closed proxy keeps any provider connection offline regardless.
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+	if err := os.WriteFile(filepath.Join(state.Directory, "capture.lock"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	retry := exec.Command(executable, "retry")
+	retry.Dir = elsewhere
+	var stdout, stderr bytes.Buffer
+	retry.Stdout, retry.Stderr = &stdout, &stderr
+	_ = retry.Run()
+	decoder := json.NewDecoder(&stdout)
+	var retried map[string]any
+	if err := decoder.Decode(&retried); err != nil || retried["meeting_id"] == nil || decoder.More() {
+		t.Fatalf("retry stdout is not one transcription state: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "prepared_stream") {
+		t.Fatalf("helper repair output missing from stderr: %s", stderr.String())
+	}
 	// The fake helper never publishes PCM queues, so these commands cannot
 	// contact OpenAI. Retry must report credential errors before audio recovery.
 	if err := os.WriteFile(credentials, []byte(`{"openai_api_key":"secret-value`), 0600); err != nil {

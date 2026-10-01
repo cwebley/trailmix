@@ -300,7 +300,8 @@ func Run(args []string) error {
 			}
 			prepare := exec.CommandContext(ctx, p.helper, "prepare-stream", "--output", *output)
 			prepare.Env = captureEnvironment()
-			prepare.Stdout, prepare.Stderr = os.Stdout, os.Stderr
+			// Repair output is progress. Stdout carries only the final state.
+			prepare.Stdout, prepare.Stderr = os.Stderr, os.Stderr
 			if err := prepare.Run(); err != nil {
 				return fmt.Errorf("prepare transcription audio: %w", err)
 			}
