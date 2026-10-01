@@ -348,6 +348,21 @@ func (n *Navigator) showNote(note Target, socket, pid string) error {
     if line == marker then found = true end
   end
   if not found then error("meeting buffer identity is missing or changed") end
+  -- Never restore into the answers/transcript panel: its next update would
+  -- replace the note. Prefer a window already showing it, then an editing one.
+  local windows, target = vim.fn.win_findbuf(buf), nil
+  for _, win in ipairs(windows) do
+    if vim.api.nvim_win_get_tabpage(win) == vim.api.nvim_get_current_tabpage() then target = win; break end
+  end
+  target = target or windows[1]
+  if not target then
+    local editing = function(win) return not vim.w[win].trailmix_panel and vim.api.nvim_win_get_config(win).relative == "" end
+    if editing(vim.api.nvim_get_current_win()) then target = vim.api.nvim_get_current_win() end
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if not target and editing(win) then target = win end
+    end
+  end
+  if target then vim.api.nvim_set_current_win(target) end
   vim.cmd("hide buffer " .. buf)
   return "ok"
 end)()`

@@ -297,6 +297,19 @@ local ok, err = xpcall(function()
   assert(vim.wait(6500, function() return text(transcript):find("request timed out", 1, true) end, 20), "hung CLI request was not bounded")
   assert(text(transcript):find("Newest speech", 1, true), "timeout discarded previous evidence")
   vim.api.nvim_win_close(transcript_window, false)
+
+  -- A window that kept its panel tag but now holds the focused note, as an
+  -- older restore could leave it, is the user's editing window, not a panel.
+  vim.env.TRAILMIX_TEST_DELAY = "0.02"
+  response()
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 1, "fixture expects only the note window")
+  vim.api.nvim_set_current_win(note_window)
+  vim.w[note_window].trailmix_panel = true
+  vim.cmd("TrailMixTranscript")
+  assert(vim.api.nvim_win_get_buf(note_window) == note, "panel replaced the focused note")
+  assert(vim.api.nvim_get_current_win() == note_window, "note lost focus")
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 2, "transcript did not open beside the note")
+  assert(not vim.w[note_window].trailmix_panel, "note window kept its stale panel tag")
 end, debug.traceback)
 
 vim.fn.delete(directory, "rf")

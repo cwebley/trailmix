@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Exercise real tmux -> Neovim startup with a fixture init.lua. Using -u NONE
@@ -123,5 +125,71 @@ func TestProcessesKeepsExecutablePaths(t *testing.T) {
 	self, ok := table[os.Getpid()]
 	if !ok || self.parent != os.Getppid() || !strings.HasPrefix(self.command, "/") {
 		t.Fatalf("own process entry: %+v", self)
+	}
+}
+
+// Restoring a note must not land in the answers/transcript panel, which would
+// then replace the note on the next panel update and take its focus.
+func TestShowNotePrefersTheNoteWindowOverThePanel(t *testing.T) {
+	nvim, err := exec.LookPath("nvim")
+	if err != nil {
+		t.Skip("nvim is not installed")
+	}
+	home, err := os.MkdirTemp("/tmp", "tm-show-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	note := Target{ID: "show-fixture", Path: filepath.Join(home, "meeting.md")}
+	if err := os.WriteFile(note.Path, []byte("<!-- trailmix: meeting "+note.ID+" -->\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(home, "e.sock")
+	editor := exec.Command(nvim, "--headless", "--clean", "--listen", socket, note.Path)
+	if err := editor.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = editor.Process.Kill(); _ = editor.Wait() })
+	lua := func(code string) string {
+		t.Helper()
+		var out string
+		for i := 0; i < 50; i++ {
+			if out, err = run(nvim, "--server", socket, "--remote-expr", "luaeval('"+strings.ReplaceAll(code, "'", "''")+"')"); err == nil {
+				return out
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("remote lua: %v %s", err, out)
+		return ""
+	}
+	// The note sits on the left; a tagged panel on the right has focus.
+	lua(`(function()
+  _G.note_win = vim.api.nvim_get_current_win()
+  vim.cmd("rightbelow vsplit | enew")
+  vim.bo.buftype = "nofile"
+  vim.b.trailmix_kind = "transcript"
+  vim.w.trailmix_panel = true
+  _G.panel_win, _G.panel_buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+  return "ok"
+end)()`)
+	n := &Navigator{nvim: nvim, home: home}
+	if err := n.showNote(note, socket, strconv.Itoa(editor.Process.Pid)); err != nil {
+		t.Fatal(err)
+	}
+	if got := lua(`vim.api.nvim_get_current_win() == _G.note_win and vim.api.nvim_win_get_buf(_G.panel_win) == _G.panel_buf and "ok" or "moved"`); got != "ok" {
+		t.Fatal("note was restored into the panel window")
+	}
+	// A note hidden behind another file returns to that editing window, not the panel.
+	lua(`(function()
+  vim.api.nvim_set_current_win(_G.note_win)
+  vim.cmd("enew")
+  vim.api.nvim_set_current_win(_G.panel_win)
+  return "ok"
+end)()`)
+	if err := n.showNote(note, socket, strconv.Itoa(editor.Process.Pid)); err != nil {
+		t.Fatal(err)
+	}
+	if got := lua(`vim.api.nvim_get_current_win() == _G.note_win and vim.api.nvim_win_get_buf(_G.panel_win) == _G.panel_buf and vim.fn.expand("%:t") == "meeting.md" and "ok" or "moved"`); got != "ok" {
+		t.Fatal("hidden note was restored into the panel window")
 	}
 }

@@ -25,6 +25,11 @@ function M.show(buffer, focus, origin)
   for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     local shown = vim.api.nvim_win_get_buf(window)
     if shown == buffer then target = window; break end
+    -- The focused window holding an ordinary buffer is where the user is
+    -- editing, whatever tag it kept. Answers must not replace that note.
+    if vim.w[window].trailmix_panel and window == current and not managed(shown) then
+      vim.w[window].trailmix_panel = nil
+    end
     if vim.w[window].trailmix_panel then
       target = window
     elseif managed(shown) then
