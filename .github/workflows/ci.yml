@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Release runs these same checks on the tagged commit before publishing.
+  workflow_call:
 
 jobs:
   test:
