@@ -6,6 +6,8 @@ package navigation
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +83,14 @@ func Preflight(home string, terminal settings.Terminal) (*Navigator, error) {
 	if err != nil {
 		return nil, err
 	}
+	// TMUX selects the server for our own commands, but launched terminals drop
+	// it to avoid nesting and would attach through the default server. Pin the
+	// server in a wrapper, which also works where {tmux} sits in a shell string.
+	if socket, _, _ := strings.Cut(os.Getenv("TMUX"), ","); filepath.IsAbs(socket) {
+		if n.tmux, err = pinnedTmux(home, n.tmux, socket); err != nil {
+			return nil, err
+		}
+	}
 	n.nvim, err = executable("nvim")
 	if err != nil {
 		return nil, err
@@ -115,6 +125,28 @@ func Preflight(home string, terminal settings.Terminal) (*Navigator, error) {
 		}
 	}
 	return n, nil
+}
+
+func pinnedTmux(home, tmux, socket string) (string, error) {
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'" }
+	sum := sha256.Sum256([]byte(tmux + "\x00" + socket))
+	path := filepath.Join(home, "tmux-"+hex.EncodeToString(sum[:8]))
+	temp, err := os.CreateTemp(home, ".tmux-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(temp.Name())
+	_, err = temp.WriteString("#!/bin/sh\nexec " + quote(tmux) + " -S " + quote(socket) + " \"$@\"\n")
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Chmod(temp.Name(), 0700)
+	}
+	if err == nil {
+		err = os.Rename(temp.Name(), path)
+	}
+	return path, err
 }
 
 type client struct {

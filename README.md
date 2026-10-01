@@ -82,7 +82,7 @@ macOS also shows its own orange microphone indicator in the menu bar while any a
 
 ### Terminal and focus
 
-`terminal.command` is an executable/argument array, never a shell string. `{tmux}`, `{target}`, and `{dir}` are replaced with the tmux executable, the attach target, and the note's directory. The default opens a Terminal.app window through `osascript`. Other terminals:
+`terminal.command` is an executable/argument array, never a shell string. `{tmux}`, `{target}`, and `{dir}` are replaced with the tmux executable, the attach target, and the note's directory. When `TMUX` selects a server, `{tmux}` is a small wrapper in `TRAILMIX_HOME` that pins that server's socket, so the new terminal attaches where the meeting was created. The default opens a Terminal.app window through `osascript`. Other terminals:
 
 ```sh
 trailmix config set terminal.command '["alacritty", "--working-directory", "{dir}", "-e", "{tmux}", "attach-session", "-t", "{target}"]'

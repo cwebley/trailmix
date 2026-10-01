@@ -1,6 +1,7 @@
 package navigation
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cwebley/trailmix/internal/settings"
+
+	"github.com/creack/pty"
 )
 
 // Exercise real tmux -> Neovim startup with a fixture init.lua. Using -u NONE
@@ -191,5 +196,85 @@ end)()`)
 	}
 	if got := lua(`vim.api.nvim_get_current_win() == _G.note_win and vim.api.nvim_win_get_buf(_G.panel_win) == _G.panel_buf and vim.fn.expand("%:t") == "meeting.md" and "ok" or "moved"`); got != "ok" {
 		t.Fatal("hidden note was restored into the panel window")
+	}
+}
+
+// The test binary doubles as a terminal that runs its -e command under a pty.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 2 && os.Args[1] == "trailmix-test-terminal" {
+		cmd := exec.Command(os.Args[2], os.Args[3:]...)
+		terminal, err := pty.Start(cmd)
+		if err != nil {
+			os.Exit(1)
+		}
+		go func() { _, _ = io.Copy(io.Discard, terminal) }()
+		_ = cmd.Wait()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// A meeting created on the server named by TMUX must be attached on that
+// server, even though launched terminals drop TMUX to avoid nesting.
+func TestLaunchedTerminalAttachesToTheSelectedServer(t *testing.T) {
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is not installed")
+	}
+	nvim, err := exec.LookPath("nvim")
+	if err != nil {
+		t.Skip("nvim is not installed")
+	}
+	home, err := os.MkdirTemp("/tmp", "tm-srv-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
+	for name, script := range map[string]string{
+		"nvim":          "#!/bin/sh\nexec " + quote(nvim) + " -u NONE --noplugin -i NONE \"$@\"\n",
+		"fake-terminal": "#!/bin/sh\nexec " + quote(self) + " trailmix-test-terminal \"$@\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+filepath.Dir(tmux)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", home)
+	t.Setenv("TERM", "xterm-256color")
+	// Isolate the default server too, so a wrong attach cannot reach a real one.
+	t.Setenv("TMUX_TMPDIR", filepath.Join(home, "default"))
+	if err := os.Mkdir(filepath.Join(home, "default"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(home, "private.sock")
+	if out, err := exec.Command(tmux, "-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "elsewhere", "/bin/sleep", "60").CombinedOutput(); err != nil {
+		t.Fatalf("start private tmux: %v %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command(tmux, "-S", socket, "kill-server").Run() })
+	t.Setenv("TMUX", socket+",1,0")
+	t.Setenv("TMUX_PANE", "")
+	n, err := Preflight(home, settings.Terminal{Command: []string{"fake-terminal", "{tmux}", "attach-session", "-t", "{target}"}, Focus: "none"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := Target{ID: "server-fixture", Path: filepath.Join(home, "meeting.md"), Session: "trailmix-server", Window: "meeting"}
+	if err := os.WriteFile(note.Path, []byte("<!-- trailmix: meeting "+note.ID+" -->\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Open(note); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(tmux, "-S", socket, "list-clients", "-F", "#{client_session}").Output()
+	if err != nil || !strings.Contains(string(out), note.Session) {
+		t.Fatalf("no client attached to the meeting on the selected server: %v %q", err, out)
 	}
 }
