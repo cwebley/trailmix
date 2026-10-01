@@ -448,20 +448,30 @@ struct CaptureMain {
             guard journal.isEmpty || journal.hasSuffix("\n") else { throw CaptureError("\(name): capture journal is truncated; original audio retained") }
             let stream = try StreamWriter(name: name, directory: temporary)
             let rows = journal.split(separator: "\n")
-            if !rows.isEmpty {
-                let url = directory.appendingPathComponent("\(name).caf")
+            let url = directory.appendingPathComponent("\(name).caf")
+            // A crash between a CAF write and its timing row leaves audio that no
+            // complete line describes. Refuse to rebuild without it.
+            let uncovered = CaptureError("\(name): capture journal does not cover the recorded audio; original audio retained")
+            if rows.isEmpty {
+                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                if size > 0, try AVAudioFile(forReading: url).length > 0 { throw uncovered }
+            } else {
                 let probe = try AVAudioFile(forReading: url)
                 let audio = try AVAudioFile(forReading: url, commonFormat: probe.fileFormat.commonFormat, interleaved: probe.fileFormat.isInterleaved)
+                var covered: Int64 = 0
                 for text in rows {
                     guard let row = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
                           let frame = row["file_frame"] as? Int64, let count = row["frames"] as? Int,
                           let start = row["start_seconds"] as? Double, count > 0, count <= 192_000 else { throw CaptureError("Invalid capture timing row") }
+                    guard frame == covered else { throw uncovered }
+                    covered += Int64(count)
                     audio.framePosition = frame
                     let pcm = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: AVAudioFrameCount(count))!
                     try audio.read(into: pcm, frameCount: AVAudioFrameCount(count))
                     guard pcm.frameLength == count else { throw CaptureError("CAF is shorter than its timing journal") }
                     try stream.write(pcm, start: start)
                 }
+                guard covered == audio.length else { throw uncovered }
             }
             try stream.finish()
             // A retry must not change audio beneath existing passage offsets.
@@ -693,6 +703,27 @@ struct CaptureMain {
         try prepareStream(directory: failureDirectory)
         let recovered = try Data(contentsOf: failureDirectory.appendingPathComponent("microphone.stream.pcm"))
         guard recovered == localBytes else { throw CaptureError("Queue failure prevented recovery from original CAF") }
+
+        // A crash between a CAF write and its timing row leaves a journal cut at
+        // a line boundary. Retry must refuse it rather than omit the audio.
+        for keep in [1, 0] {
+            let cut = directory.appendingPathComponent("truncated-\(keep)")
+            try FileManager.default.createDirectory(at: cut, withIntermediateDirectories: false)
+            let microphone = try TrackWriter(name: "microphone", directory: cut)
+            let system = try TrackWriter(name: "system", directory: cut)
+            try microphone.write(sample, startSeconds: 1)
+            try microphone.write(sample, startSeconds: 1.01)
+            try microphone.finish(); try system.finish()
+            let journal = cut.appendingPathComponent("microphone.timeline.jsonl")
+            let rows = try String(contentsOf: journal, encoding: .utf8).split(separator: "\n")
+            try rows.prefix(keep).map { $0 + "\n" }.joined().write(to: journal, atomically: true, encoding: .utf8)
+            do {
+                try prepareStream(directory: cut)
+                throw CaptureError("Retry omitted audio beyond a truncated journal (\(keep) rows kept)")
+            } catch let error as CaptureError {
+                guard error.message.contains("does not cover") else { throw error }
+            }
+        }
     }
 
     static func testSample(_ pcm: AVAudioPCMBuffer) throws -> CMSampleBuffer {

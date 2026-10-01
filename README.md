@@ -347,7 +347,7 @@ trailmix retry --output '/path/to/recording'
 trailmix transcript --output '/path/to/recording'
 ```
 
-Retry waits for exclusive access to the recording through locks, reporting an error if capture or another retry is active. It reconstructs the streaming queue from CAF and the original timing journals, checking that existing PCM bytes match before replacing it. Finalized passages are immutable and skipped on replay. Pending ranges can be recovered without changing existing evidence. Corrupted original audio or a truncated original capture journal needs investigation rather than a guessed reconstruction. Recordings made with the older capture-only binary lack the native lock file and are not supported by this retry command.
+Retry waits for exclusive access to the recording through locks, reporting an error if capture or another retry is active. It reconstructs the streaming queue from CAF and the original timing journals, checking that existing PCM bytes match before replacing it. Finalized passages are immutable and skipped on replay. Pending ranges can be recovered without changing existing evidence. Corrupted original audio or a truncated original capture journal needs investigation rather than a guessed reconstruction. Retry refuses a journal that does not cover every recorded frame, including one a crash left cut at a line boundary. Recordings made with the older capture-only binary lack the native lock file and are not supported by this retry command.
 
 ### Provider facts checked September 23, 2026
 
