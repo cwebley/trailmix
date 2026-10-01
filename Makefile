@@ -69,4 +69,5 @@ test: build
 test-neovim:
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/timestamp.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/transcript.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/note_jump.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/ask.lua

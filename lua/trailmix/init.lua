@@ -1,9 +1,10 @@
 local M = {}
-local options = { cli = vim.env.TRAILMIX_CLI or "trailmix", mapping = "<leader>mt", ask_mapping = "<leader>ma", transcript_mapping = "<leader>mT" }
+local options = {
+  cli = vim.env.TRAILMIX_CLI or "trailmix", mapping = "<leader>mt", ask_mapping = "<leader>ma", transcript_mapping = "<leader>mT",
+  transcript_jump_mapping = "<leader>ml", note_jump_mapping = "<leader>mh", note_jump_back_mapping = "<leader>mH",
+}
 local pending = false
-local installed_mapping
-local installed_ask_mapping
-local installed_transcript_mapping
+local installed = {}
 
 local function notify(message)
   vim.notify("TrailMix: " .. message, vim.log.levels.WARN)
@@ -17,6 +18,11 @@ function M.add_timestamp()
     return
   end
   local buffer, window = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+  -- From the transcript, stamp the passage under the cursor into the note.
+  if vim.b[buffer].trailmix_kind == "transcript" then
+    require("trailmix.transcript").stamp()
+    return
+  end
   local id = meeting_id(buffer)
   if not id then
     notify("this note needs exactly one valid meeting ID")
@@ -66,13 +72,7 @@ function M.add_timestamp()
         notify("recorder returned an invalid capture timestamp")
         return
       end
-      local seconds = math.floor(elapsed)
-      local anchor
-      if seconds >= 3600 then
-        anchor = string.format("@%02d:%02d:%02d", math.floor(seconds / 3600), math.floor(seconds / 60) % 60, seconds % 60)
-      else
-        anchor = string.format("@%02d:%02d", math.floor(seconds / 60), seconds % 60)
-      end
+      local anchor = require("trailmix.anchors").format(elapsed)
       vim.api.nvim_buf_set_lines(buffer, cursor[1] - 1, cursor[1] - 1, false, { anchor })
       vim.api.nvim_win_set_cursor(window, { cursor[1] + 1, cursor[2] })
     end)
@@ -86,15 +86,8 @@ function M.add_timestamp()
 end
 
 function M.setup(opts)
-  if installed_mapping then
-    pcall(vim.keymap.del, "n", installed_mapping)
-    pcall(vim.keymap.del, "i", installed_mapping)
-  end
-  if installed_ask_mapping then
-    pcall(vim.keymap.del, "n", installed_ask_mapping)
-    pcall(vim.keymap.del, "x", installed_ask_mapping)
-  end
-  if installed_transcript_mapping then pcall(vim.keymap.del, "n", installed_transcript_mapping) end
+  for _, mapping in ipairs(installed) do pcall(vim.keymap.del, mapping[1], mapping[2]) end
+  installed = {}
   options = vim.tbl_extend("force", options, opts or {})
   vim.api.nvim_create_user_command("TrailMixAddTimestamp", M.add_timestamp, { desc = "Insert the active meeting's capture timestamp", force = true })
   vim.api.nvim_create_user_command("TrailMixTranscript", function(command)
@@ -107,6 +100,10 @@ function M.setup(opts)
     require("trailmix.transcript").toggle(meeting_id(vim.api.nvim_get_current_buf()), options)
   end
   vim.api.nvim_create_user_command("TrailMixTranscriptToggle", toggle_transcript, { desc = "Toggle this meeting's transcript", force = true })
+  vim.api.nvim_create_user_command("TrailMixNoteJump", function() require("trailmix.transcript").note_jump(1) end,
+    { desc = "Jump from a transcript passage to the closest note timestamp, or to the next-closest", force = true })
+  vim.api.nvim_create_user_command("TrailMixNoteJumpBack", function() require("trailmix.transcript").note_jump(-1) end,
+    { desc = "Step back to the previous note timestamp candidate", force = true })
   vim.api.nvim_create_user_command("TrailMixAsk", function(command)
     local selection
     if command.range > 0 then selection = table.concat(vim.api.nvim_buf_get_lines(0, command.line1 - 1, command.line2, false), "\n") end
@@ -121,19 +118,19 @@ function M.setup(opts)
     require("trailmix.ask").attach(event.buf, options)
   end })
   for _, buffer in ipairs(vim.api.nvim_list_bufs()) do require("trailmix.ask").attach(buffer, options) end
-  if options.mapping then
-    vim.keymap.set({ "n", "i" }, options.mapping, M.add_timestamp, { desc = "TrailMix timestamp" })
+  -- false disables a mapping. Remember what was set so setup can run again.
+  local function map(modes, lhs, rhs, desc)
+    if not lhs then return end
+    vim.keymap.set(modes, lhs, rhs, { desc = desc })
+    for _, mode in ipairs(modes) do installed[#installed + 1] = { mode, lhs } end
   end
-  installed_mapping = options.mapping
-  if options.ask_mapping then
-    vim.keymap.set("n", options.ask_mapping, function() require("trailmix.ask").ask(options) end, { desc = "Ask TrailMix" })
-    vim.keymap.set("x", options.ask_mapping, function() require("trailmix.ask").visual(options) end, { desc = "Ask TrailMix about selection" })
-  end
-  installed_ask_mapping = options.ask_mapping
-  if options.transcript_mapping then
-    vim.keymap.set("n", options.transcript_mapping, toggle_transcript, { desc = "Toggle TrailMix transcript" })
-  end
-  installed_transcript_mapping = options.transcript_mapping
+  map({ "n", "i" }, options.mapping, M.add_timestamp, "TrailMix timestamp")
+  map({ "n" }, options.ask_mapping, function() require("trailmix.ask").ask(options) end, "Ask TrailMix")
+  map({ "x" }, options.ask_mapping, function() require("trailmix.ask").visual(options) end, "Ask TrailMix about selection")
+  map({ "n" }, options.transcript_mapping, toggle_transcript, "Toggle TrailMix transcript")
+  map({ "n" }, options.transcript_jump_mapping, function() vim.cmd("TrailMixTranscriptJump") end, "Jump from note to transcript")
+  map({ "n" }, options.note_jump_mapping, function() require("trailmix.transcript").note_jump(1) end, "Jump from transcript to note")
+  map({ "n" }, options.note_jump_back_mapping, function() require("trailmix.transcript").note_jump(-1) end, "Previous note timestamp candidate")
 end
 
 return M

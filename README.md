@@ -129,6 +129,9 @@ return {
       mapping = "<leader>mt", -- normal and insert mode; false disables the mapping
       ask_mapping = "<leader>ma", -- normal and visual mode; false disables it
       transcript_mapping = "<leader>mT", -- normal-mode toggle; false disables it
+      transcript_jump_mapping = "<leader>ml", -- note to transcript; false disables it
+      note_jump_mapping = "<leader>mh", -- transcript to note, then next-closest; false disables it
+      note_jump_back_mapping = "<leader>mH", -- previous candidate; false disables it
     },
   },
 }
@@ -164,6 +167,19 @@ The split shows finalized passages in capture order, with source labels and time
 - `q` closes the transcript window. Closing the last view stops its polling. Moving it to another tab or splitting its window is supported.
 
 `TrailMixTranscriptJump` uses the standalone timestamp on the current line, or the nearest preceding timestamp, and focuses the transcript near that time. Anchors inside backtick or tilde fences are ignored. With no preceding anchor, navigation starts at `00:00`; the note remains untimed for AI context. Invalid anchors and times beyond the recorded duration report an error. The view includes up to about ten seconds of preceding passage context when it fits. Passage ranges locate the conversation, not individual words.
+
+### Moving between notes and transcript
+
+| Key | Command | From the note | From the transcript |
+| --- | --- | --- | --- |
+| `<leader>ml` | `:TrailMixTranscriptJump` | Transcript near the governing timestamp | Reports that you are already there |
+| `<leader>mh` | `:TrailMixNoteJump` | Next-closest timestamp, after a jump from the transcript | Note timestamp closest in time to the passage under the cursor |
+| `<leader>mH` | `:TrailMixNoteJumpBack` | Previous candidate | Same as `<leader>mh` |
+| `<leader>mt` | `:TrailMixAddTimestamp` | Live timestamp while recording | Stamps the passage into the note; in visual mode, also quotes the selection |
+
+`TrailMixNoteJump` works on the passage whose header, text, or trailing blank line holds the cursor. Timestamps in a note need not be in order, so it ranks every valid anchor by its distance in time from the passage start, earlier anchors first on ties, and ignores fenced or malformed ones. It reports the choice, for example `@00:55 · 3s before · 1 of 3`. Repeating it from the note steps to the next-closest anchor and wraps; `TrailMixNoteJumpBack` steps the other way. Moving the cursor off that anchor or editing the note ends the cycle, and the next jump must start from a passage again. The note must be visible in the current tab.
+
+From the transcript, `<leader>mt` inserts the passage's start as a timestamp line above the note's cursor and leaves focus in the transcript, so several moments can be stamped in a row. It works after the meeting too, because passages keep their capture times. With a visual selection, the timestamp comes from the first selected passage and the selected transcript text follows as a Markdown quote, one quote paragraph per passage; passage header lines are left out. Each stamp is one undo step in the note. The timestamp locates the passage, not the selected words.
 
 For an exact finalized passage, use `:TrailMixTranscript PASSAGE_ID` from the note or its transcript. IDs printed by `trailmix transcript` remain valid after reopening Neovim. A missing ID reports an error rather than jumping to another passage.
 
@@ -447,7 +463,7 @@ The workspace integration test uses a private tmux server, clean Neovim instance
 
 A separate navigation regression test loads a fixture `init.lua` through real tmux and Neovim. It checks leader mappings with unset, empty, and custom `XDG_CONFIG_HOME` values, including a stale tmux server value. This catches configuration-loading failures that `-u NONE` tests cannot detect.
 
-Transcript checks exercise the real CLI and two fresh isolated Neovim processes against one older meeting while a newer recording exists. Headless editor checks cover asynchronous updates, provisional text, scroll preservation after late finals, timestamp and passage jumps, fenced and invalid anchors, normal search/yank, visual selections, moved/duplicated windows, failed reads, timeouts, and polling cleanup. These tests use fixture data and never start capture or contact the transcription provider.
+Transcript checks exercise the real CLI and two fresh isolated Neovim processes against one older meeting while a newer recording exists. Headless editor checks cover asynchronous updates, provisional text, scroll preservation after late finals, timestamp and passage jumps, reverse jumps to out-of-order note timestamps with cycling, stamping and quoting passages into the note, fenced and invalid anchors, normal search/yank, visual selections, moved/duplicated windows, failed reads, timeouts, and polling cleanup. These tests use fixture data and never start capture or contact the transcription provider.
 
 Ask checks cross the actual CLI and a fake headless assistant process. They cover unsaved input snapshots, validated citations, concurrent appends, preservation of source notes and existing files, OpenCode error events, output limits, timeouts, and cleanup of wrapper child processes. Headless Neovim checks exercise selection and prompt behavior, shared-window reuse, named answer files, cancellation, pending-buffer replacement, and citation/back navigation. An editor-to-CLI integration check follows a generated citation back to stored evidence without using a real model.
 

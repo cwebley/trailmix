@@ -1,6 +1,8 @@
 local M = {}
 local views = {}
 local display = require("trailmix.transcript_view")
+local note = require("trailmix.note")
+local anchors = require("trailmix.anchors")
 local namespace = vim.api.nvim_create_namespace("trailmix-transcript")
 
 local function notify(message)
@@ -55,6 +57,39 @@ local function moved(view)
       view.navigation = nil
     end
   end
+end
+
+-- The passage a transcript row belongs to: its header, text, or trailing blank.
+local function passage_at(view, row)
+  local key = (view.keys or {})[row] or ""
+  local id = key:match("^passage:(.+):%d+$") or key:match("^text:(.+):%d+$") or key:match("^gap:(.+):%d+$")
+  for _, passage in ipairs(id and view.passages or {}) do
+    if passage.id == id then return passage end
+  end
+end
+
+-- The meeting's note in the current tab. A panel showing its answers does not count.
+local function note_window(id)
+  for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local buffer = vim.api.nvim_win_get_buf(window)
+    if vim.b[buffer].trailmix_kind == nil and note.id(buffer) == id then return window, buffer end
+  end
+end
+
+local function current_view()
+  local view = views[vim.api.nvim_get_current_buf()]
+  if view and valid(view) then return view end
+end
+
+-- Selected transcript lines, then leave visual mode.
+local function selection()
+  local first, last, mode = vim.fn.getpos("v"), vim.fn.getpos("."), vim.fn.mode()
+  local regions = vim.fn.getregionpos(first, last, { type = mode })
+  local lines = vim.fn.getregion(first, last, { type = mode })
+  vim.api.nvim_feedkeys("\27", "nx", false)
+  local result = {}
+  for index, region in ipairs(regions) do result[index] = { row = region[1][2], text = lines[index] } end
+  return result
 end
 
 local function navigate(view)
@@ -275,6 +310,9 @@ local function open(id, opts, target, origin)
     render(view)
   end, { buffer = buffer, desc = "Follow latest transcript" })
   require("trailmix.panel").keys(buffer)
+  if opts.mapping then
+    vim.keymap.set("x", opts.mapping, function() M.stamp(selection()) end, { buffer = buffer, desc = "Quote selection into TrailMix note" })
+  end
   render(view)
   if target then request_navigation(view, target) end
   refresh(view)
@@ -299,10 +337,93 @@ function M.toggle(id, opts)
 end
 
 function M.jump(id, opts)
+  if vim.b[vim.api.nvim_get_current_buf()].trailmix_kind == "transcript" then
+    notify("already in the transcript; use :TrailMixNoteJump to return to the note")
+    return
+  end
   if not id then notify("this note needs exactly one valid meeting ID"); return end
   local seconds, problem = require("trailmix.anchors").at_cursor(vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)[1])
   if not seconds then notify(problem); return end
   open(id, opts, { seconds = seconds })
+end
+
+-- The reverse jump cycles through the note's anchors by closeness to the
+-- passage. It continues only while the cursor stays on the anchor it placed
+-- and the note is unedited; anything else starts over from a passage.
+local cycle
+
+local function distance(seconds)
+  seconds = math.floor(math.abs(seconds) + 0.5)
+  if seconds < 60 then return seconds .. "s" end
+  return string.format("%dm %02ds", math.floor(seconds / 60), seconds % 60)
+end
+
+local function show_candidate()
+  local candidate = cycle.candidates[cycle.index]
+  vim.api.nvim_set_current_win(cycle.window)
+  vim.api.nvim_win_set_cursor(cycle.window, { candidate.row, 0 })
+  cycle.row = candidate.row
+  local offset = candidate.seconds - cycle.start
+  local relation = math.abs(offset) < 0.5 and "at this passage" or distance(offset) .. (offset < 0 and " before" or " after")
+  vim.notify(string.format("TrailMix: %s · %s · %d of %d", anchors.format(candidate.seconds), relation, cycle.index, #cycle.candidates), vim.log.levels.INFO)
+end
+
+-- From a passage, go to the note anchor closest to it in time; from the note,
+-- step through the remaining candidates. Step is 1 forward or -1 back.
+function M.note_jump(step)
+  local view = current_view()
+  if not view then
+    local buffer, window = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+    if cycle and cycle.buffer == buffer and cycle.window == window
+      and vim.api.nvim_buf_get_changedtick(buffer) == cycle.tick and vim.api.nvim_win_get_cursor(window)[1] == cycle.row then
+      cycle.index = (cycle.index - 1 + step) % #cycle.candidates + 1
+      show_candidate()
+    else
+      cycle = nil
+      notify("start from a transcript passage to jump to its note timestamp")
+    end
+    return
+  end
+  local passage = passage_at(view, vim.api.nvim_win_get_cursor(0)[1])
+  if not passage then notify("place the cursor on a transcript passage"); return end
+  local window, buffer = note_window(view.id)
+  if not window then notify("open this meeting's note in this tab to jump to it"); return end
+  local candidates = anchors.list(buffer)
+  if #candidates == 0 then notify("this meeting's note has no timestamps"); return end
+  table.sort(candidates, function(a, b)
+    local da, db = math.abs(a.seconds - passage.start), math.abs(b.seconds - passage.start)
+    if da ~= db then return da < db end
+    if a.seconds ~= b.seconds then return a.seconds < b.seconds end
+    return a.row < b.row
+  end)
+  cycle = { buffer = buffer, window = window, tick = vim.api.nvim_buf_get_changedtick(buffer), candidates = candidates, index = 1, start = passage.start }
+  show_candidate()
+end
+
+-- Insert the passage's start, and any selected transcript text as a quote,
+-- above the note's cursor. Focus stays here so several moments can be stamped.
+function M.stamp(lines)
+  local view = current_view()
+  if not view then return end
+  local passage, quote, previous = nil, {}, nil
+  for _, line in ipairs(lines or { { row = vim.api.nvim_win_get_cursor(0)[1] } }) do
+    local owner = passage_at(view, line.row)
+    passage = passage or owner
+    local text = vim.trim(line.text or "")
+    if owner and (view.keys[line.row] or ""):match("^text:") and text ~= "" then
+      if previous and previous ~= owner.id then quote[#quote + 1] = ">" end
+      quote[#quote + 1] = "> " .. text
+      previous = owner.id
+    end
+  end
+  if not passage then notify("place the cursor on a transcript passage"); return end
+  local window, buffer = note_window(view.id)
+  if not window then notify("open this meeting's note in this tab to add a timestamp"); return end
+  if not vim.bo[buffer].modifiable then notify("this meeting's note is not modifiable"); return end
+  local cursor = vim.api.nvim_win_get_cursor(window)
+  local inserted = vim.list_extend({ anchors.format(passage.start) }, quote)
+  vim.api.nvim_buf_set_lines(buffer, cursor[1] - 1, cursor[1] - 1, false, inserted)
+  vim.api.nvim_win_set_cursor(window, { cursor[1] + #inserted, cursor[2] })
 end
 
 return M
