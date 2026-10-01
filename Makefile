@@ -29,16 +29,17 @@ $(CAPTURE): native/Capture.swift native/Info.plist
 	codesign --force --sign - $(CAPTURE_APP)
 
 # Installs a self-contained copy, so the checkout can move or be rebuilt.
+# Paths are quoted so a prefix with spaces cannot split into other targets.
 install: build
-	rm -rf $(LIBDIR)
-	mkdir -p $(LIBDIR) $(PREFIX)/bin
-	cp bin/trailmix $(LIBDIR)/trailmix
-	ditto $(CAPTURE_APP) $(LIBDIR)/TrailMixCapture.app
-	ln -sf $(LIBDIR)/trailmix $(PREFIX)/bin/trailmix
+	rm -rf '$(LIBDIR)'
+	mkdir -p '$(LIBDIR)' '$(PREFIX)/bin'
+	cp bin/trailmix '$(LIBDIR)/trailmix'
+	ditto $(CAPTURE_APP) '$(LIBDIR)/TrailMixCapture.app'
+	ln -sf '$(LIBDIR)/trailmix' '$(PREFIX)/bin/trailmix'
 
 uninstall:
-	rm -f $(PREFIX)/bin/trailmix
-	rm -rf $(LIBDIR)
+	rm -f '$(PREFIX)/bin/trailmix'
+	rm -rf '$(LIBDIR)'
 
 dist: clean
 	$(MAKE) build ARCHS="arm64 x86_64" VERSION=$(VERSION)
