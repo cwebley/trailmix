@@ -167,7 +167,7 @@ The split shows finalized passages in capture order, with source labels and time
 
 For an exact finalized passage, use `:TrailMixTranscript PASSAGE_ID` from the note or its transcript. IDs printed by `trailmix transcript` remain valid after reopening Neovim. A missing ID reports an error rather than jumping to another passage.
 
-The plugin reads local snapshots asynchronously, with one request at a time and a four-second timeout. It polls visible views every second, including stopped meetings so retry results appear. Hidden tabs do not make requests. Set `transcript_refresh_ms` in the plugin's `opts` to change the interval, with a minimum of 100 ms. No capture or provider request is started by viewing a transcript.
+The plugin reads local snapshots asynchronously, with one request at a time and a four-second timeout. It polls visible views every second, including stopped meetings so retry results appear. Hidden tabs do not make requests. Set `transcript_refresh_ms` in the plugin's `opts` to change the interval, with a minimum of 100 ms. Each refresh rereads every finalized passage, so cost grows with the meeting. A three-hour fixture of continuous speech on both tracks (about 2,600 passages, 1.2 MB of JSON) measured about 40 ms per CLI read and 10 ms of Neovim main-thread work per refresh on an Apple M4 Pro. No capture or provider request is started by viewing a transcript.
 
 The editor uses this CLI interface, which is also available for scripts:
 
@@ -330,7 +330,7 @@ trailmix transcript
 
 Substitute a current microphone ID from `devices`, or omit `--mic` to use the configured or system-default input. Check for `recording` before speaking. `record` without `--transcribe` keeps the capture-only workflow. High-level `start` always enables hosted transcription.
 
-`--transcribe` sends separate microphone and system streams to OpenAI's `gpt-live-transcribe`. The helper saves original CAF audio and a second, mono signed PCM16 queue at 24 kHz. Go reads that queue independently of capture. Network delays do not block the native audio callback. The queue uses about 346 MB per hour for two continuously delivered tracks, in addition to the original CAF files and timing journals.
+`--transcribe` sends separate microphone and system streams to OpenAI's `gpt-live-transcribe`. The helper saves original CAF audio and a second, mono signed PCM16 queue at 24 kHz. Go reads that queue independently of capture. Network delays do not block the native audio callback. The queue uses about 346 MB per hour for two continuously delivered tracks, in addition to the original CAF files and timing journals. CAF keeps each device's delivered format: system audio arrives as 48 kHz stereo 32-bit float, about 1.4 GB per hour, and a 48 kHz mono float microphone adds about 0.7 GB per hour. A three-hour meeting can therefore use roughly 7 GB.
 
 The local energy detector closes a turn after 600 ms below RMS 0.008, or after 15 seconds of uninterrupted audio. Capture gaps also close turns. Audio is sent while the turn is open. Entirely below-threshold turns are cleared rather than turned into evidence. This is a simple detector to evaluate on the real headset and call audio; quiet speech can be missed. A trailing speech turn shorter than 100 ms gets provider-only zero padding. Its evidence range excludes that padding.
 
