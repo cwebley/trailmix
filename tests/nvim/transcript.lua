@@ -108,17 +108,17 @@ local ok, err = xpcall(function()
   vim.api.nvim_set_current_win(note_window)
   vim.cmd("TrailMixTranscriptJump")
   assert(vim.api.nvim_get_current_win() == transcript_window, "jump did not focus transcript")
-  assert(vim.api.nvim_get_current_line():find("00:58–01:03 microphone", 1, true), "jump did not use bullet's preceding anchor")
+  wait_for(function() return vim.api.nvim_get_current_line():find("00:58–01:03 microphone", 1, true) end, "jump did not use bullet's preceding anchor")
   vim.cmd("TrailMixTranscript system-later")
-  assert(vim.api.nvim_get_current_line():find("01:02–01:05 system", 1, true), "exact passage navigation failed")
+  wait_for(function() return vim.api.nvim_get_current_line():find("01:02–01:05 system", 1, true) end, "exact passage navigation failed")
   vim.cmd("TrailMixTranscript missing-passage")
-  assert(notices[#notices]:find("not found", 1, true), "missing passage was silently substituted")
+  wait_for(function() return (notices[#notices] or ""):find("not found", 1, true) end, "missing passage was silently substituted")
 
   vim.api.nvim_set_current_win(note_window)
   vim.api.nvim_buf_set_lines(note, 0, -1, false, { marker, "@00:59", "```markdown", "@01:30", "```", "- follow earlier anchor", "~~~", "@01:50", "~~~" })
   vim.api.nvim_win_set_cursor(note_window, { 9, 0 })
   vim.cmd("TrailMixTranscriptJump")
-  assert(vim.api.nvim_get_current_line():find("00:58–01:03 microphone", 1, true), "code fence anchor was interpreted")
+  wait_for(function() return vim.api.nvim_get_current_line():find("00:58–01:03 microphone", 1, true) end, "code fence anchor was interpreted")
   vim.api.nvim_set_current_win(note_window)
   vim.api.nvim_buf_set_lines(note, 0, -1, false, { marker, "@99:99", "- invalid anchor" })
   vim.api.nvim_win_set_cursor(note_window, { 3, 0 })
@@ -126,7 +126,31 @@ local ok, err = xpcall(function()
   assert(vim.api.nvim_get_current_win() == note_window and notices[#notices]:find("invalid", 1, true), "invalid anchor accepted")
   vim.api.nvim_buf_set_lines(note, 1, 2, false, { "@02:30" })
   vim.cmd("TrailMixTranscriptJump")
-  assert(notices[#notices]:find("duration", 1, true), "out-of-range anchor accepted")
+  wait_for(function() return (notices[#notices] or ""):find("duration", 1, true) end, "out-of-range anchor accepted")
+
+  -- Jumps resolve against a read started after the request, not the cached
+  -- snapshot: a live meeting outgrows its last duration and passage list.
+  vim.env.TRAILMIX_TEST_DELAY = "0.3"
+  local grown = {
+    { id = "microphone-first", meeting_id = id, track = "microphone", start_seconds = 58, end_seconds = 63, text = "When is the review?" },
+    { id = "system-later", meeting_id = id, track = "system", start_seconds = 62, end_seconds = 65, text = "Friday is tentative." },
+    { id = "past-cache", meeting_id = id, track = "system", start_seconds = 140, end_seconds = 145, text = "Spoken after the cached read." },
+  }
+  response(grown, { duration_seconds = 150 })
+  vim.api.nvim_set_current_win(note_window)
+  vim.api.nvim_buf_set_lines(note, 0, -1, false, { marker, "@02:21", "- beyond the cached duration" })
+  vim.api.nvim_win_set_cursor(note_window, { 3, 0 })
+  local quiet = #notices
+  vim.cmd("TrailMixTranscriptJump")
+  wait_for(function() return vim.api.nvim_get_current_line():find("02:20–02:25 system", 1, true) end, "jump resolved against a stale duration")
+  assert(#notices == quiet, "stale snapshot rejected a valid timestamp: " .. tostring(notices[#notices]))
+  table.insert(grown, { id = "newest-passage", meeting_id = id, track = "microphone", start_seconds = 146, end_seconds = 149, text = "Cited before the transcript refreshed." })
+  response(grown, { duration_seconds = 150 })
+  vim.cmd("TrailMixTranscript newest-passage")
+  wait_for(function() return vim.api.nvim_get_current_line():find("02:26–02:29 microphone", 1, true) end, "passage resolved against a stale snapshot")
+  assert(#notices == quiet, "stale snapshot rejected a valid passage: " .. tostring(notices[#notices]))
+  vim.env.TRAILMIX_TEST_DELAY = "0.02"
+  response()
 
   -- Closing the split and reopening the note resolves stable passage IDs again.
   vim.api.nvim_set_current_win(note_window)
@@ -211,7 +235,7 @@ local ok, err = xpcall(function()
   vim.api.nvim_win_set_cursor(note_window, { 3, 0 })
   local notice_count = #notices
   vim.cmd("TrailMixTranscriptJump")
-  assert(#notices > notice_count and notices[#notices]:find("duration", 1, true), "degraded transcript guessed out-of-range time")
+  wait_for(function() return #notices > notice_count and (notices[#notices] or ""):find("duration", 1, true) end, "degraded transcript guessed out-of-range time")
   for _, invalid in ipairs({ "@-01:00", "@01:xx", "@xx:30" }) do
     vim.api.nvim_set_current_win(note_window)
     vim.api.nvim_buf_set_lines(note, 0, -1, false, { marker, "@00:30", invalid, "- current section" })

@@ -59,7 +59,9 @@ end
 
 local function navigate(view)
   local target = view.navigation
-  if not target or not view.snapshot then return end
+  -- Resolve only against a read started after the request. The cached
+  -- snapshot may predate passages and duration the target refers to.
+  if not target or not view.snapshot or (view.read or 0) <= target.after then return end
   view.navigation = nil
   -- A delayed fetch cannot take focus back or move another editing target.
   if vim.api.nvim_get_current_win() ~= view.window or vim.api.nvim_get_current_buf() ~= view.buffer then return end
@@ -158,7 +160,8 @@ refresh = function(view)
   if not valid(view) or view.pending then return end
   if view.timer then view.timer:stop(); view.timer:close(); view.timer = nil end
   if view.tab ~= vim.api.nvim_get_current_tabpage() then schedule(view); return end
-  view.pending = true
+  view.pending, view.started = true, (view.started or 0) + 1
+  local read = view.started
   local ok, process = pcall(vim.system, { view.cli, "transcript", "--meeting", view.id, "--json" }, { text = true, timeout = 4000 }, function(result)
     vim.schedule(function()
       view.pending, view.process = false, nil
@@ -172,12 +175,13 @@ refresh = function(view)
       elseif not decoded or not checked then
         view.failure = tostring(problem)
       else
-        view.failure, view.snapshot = nil, snapshot
+        view.failure, view.snapshot, view.read = nil, snapshot, read
         if view.follow == nil then view.follow = snapshot.transcription.state == "streaming" end
       end
       if view.failure then view.failure = view.failure:gsub("[\r\n]", " "):sub(1, 300) end
       render(view)
-      schedule(view)
+      -- A navigation requested during this read still needs a newer one.
+      if view.navigation and read <= view.navigation.after then refresh(view) else schedule(view) end
     end)
   end)
   if ok then
@@ -194,17 +198,19 @@ local function request_navigation(view, target)
   view.follow = false
   vim.api.nvim_set_current_win(view.window)
   remember_positions(view)
+  target.after = view.started or 0
   view.navigation = target
   render(view)
+  refresh(view)
 end
 
-function M.open(id, opts, passage, origin)
+local function open(id, opts, target, origin)
   local tab = vim.api.nvim_get_current_tabpage()
   for _, view in pairs(views) do
     if valid(view) and view.tab == tab and (view.id == id or view.buffer == vim.api.nvim_get_current_buf()) then
       if origin then require("trailmix.panel").remember(view.window, origin) end
       if view.buffer == vim.api.nvim_get_current_buf() then view.window = vim.api.nvim_get_current_win() end
-      if passage then request_navigation(view, { passage = passage }) end
+      if target then request_navigation(view, target) end
       refresh(view)
       return view
     end
@@ -270,9 +276,13 @@ function M.open(id, opts, passage, origin)
   end, { buffer = buffer, desc = "Follow latest transcript" })
   require("trailmix.panel").keys(buffer)
   render(view)
-  if passage then request_navigation(view, { passage = passage }) end
+  if target then request_navigation(view, target) end
   refresh(view)
   return view
+end
+
+function M.open(id, opts, passage, origin)
+  return open(id, opts, passage and { passage = passage }, origin)
 end
 
 function M.toggle(id, opts)
@@ -292,8 +302,7 @@ function M.jump(id, opts)
   if not id then notify("this note needs exactly one valid meeting ID"); return end
   local seconds, problem = require("trailmix.anchors").at_cursor(vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)[1])
   if not seconds then notify(problem); return end
-  local view = M.open(id, opts)
-  if view then request_navigation(view, { seconds = seconds }) end
+  open(id, opts, { seconds = seconds })
 end
 
 return M
