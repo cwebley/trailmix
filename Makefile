@@ -18,6 +18,14 @@ bin/trailmix: FORCE
 	$(foreach a,$(ARCHS),GOOS=darwin GOARCH=$(call goarch,$(a)) CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o .build/trailmix-$(a) ./cmd/trailmix &&) true
 	lipo -create $(ARCHS:%=.build/trailmix-%) -output $@
 
+# The helper records the ARCHS and VERSION it was built with, and rebuilds when
+# they differ instead of leaving a stale architecture or version beside the
+# CLI. Compared at parse time: mtimes cannot express a configuration change.
+HELPER_CONFIG = $(ARCHS) $(VERSION)
+ifneq ($(HELPER_CONFIG),$(shell cat .build/helper-config 2>/dev/null))
+.PHONY: $(CAPTURE)
+endif
+
 # The CLI finds the helper beside its resolved executable path.
 $(CAPTURE): native/Capture.swift native/Info.plist
 	rm -rf $(CAPTURE_APP)
@@ -27,6 +35,7 @@ $(CAPTURE): native/Capture.swift native/Info.plist
 	$(foreach a,$(ARCHS),xcrun swiftc -swift-version 6 -O -parse-as-library -target $(a)-apple-macosx15.0 -module-cache-path .build/swift-cache native/Capture.swift -o .build/trailmix-capture-$(a) &&) true
 	lipo -create $(ARCHS:%=.build/trailmix-capture-%) -output $@
 	codesign --force --sign - $(CAPTURE_APP)
+	echo '$(HELPER_CONFIG)' > .build/helper-config
 
 # Installs a self-contained copy, so the checkout can move or be rebuilt.
 # Paths are quoted so a prefix with spaces cannot split into other targets.
