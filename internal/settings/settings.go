@@ -21,6 +21,14 @@ type Settings struct {
 	Microphone string    `json:"microphone,omitempty"`
 	Assistant  Assistant `json:"assistant"`
 	Terminal   Terminal  `json:"terminal"`
+	Recap      Recap     `json:"recap"`
+}
+
+// Recap controls automatic jobs for newly captured workspace meetings.
+// Explicit recap requests remain available when automatic jobs are disabled.
+type Recap struct {
+	Enabled  bool `json:"enabled"`
+	AutoName bool `json:"auto_name"`
 }
 
 // Terminal chooses how a meeting's tmux session reaches the screen when no
@@ -121,7 +129,7 @@ func Read() (Settings, error) {
 	s := Settings{NotesRoot: filepath.Join(home, "Documents", "TrailMix"), Assistant: Assistant{
 		Command: []string{"opencode", "run", "--format", "json", "--agent", "trailmix-ask"},
 		Format:  "opencode-json", TimeoutSeconds: 180,
-	}, Terminal: Terminal{Command: DefaultTerminalCommand, Focus: "auto"}}
+	}, Terminal: Terminal{Command: DefaultTerminalCommand, Focus: "auto"}, Recap: Recap{Enabled: true, AutoName: true}}
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return s, err
@@ -161,7 +169,7 @@ func Run(args []string) error {
 		}{path, s}, true)
 	}
 	if len(args) != 3 || args[0] != "set" {
-		return errors.New("usage: trailmix config [show | set notes_root|template|microphone|assistant.command|assistant.format|assistant.timeout_seconds|terminal.command|terminal.focus VALUE]; commands are JSON arrays")
+		return errors.New("usage: trailmix config [show | set notes_root|template|microphone|assistant.command|assistant.format|assistant.timeout_seconds|terminal.command|terminal.focus|recap.enabled|recap.auto_name VALUE]; commands are JSON arrays")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -207,6 +215,15 @@ func Run(args []string) error {
 		s.Assistant.TimeoutSeconds, err = strconv.Atoi(value)
 		if err != nil {
 			return err
+		}
+	case "recap.enabled", "recap.auto_name":
+		if value != "true" && value != "false" {
+			return fmt.Errorf("%s must be true or false", args[1])
+		}
+		if args[1] == "recap.enabled" {
+			s.Recap.Enabled = value == "true"
+		} else {
+			s.Recap.AutoName = value == "true"
 		}
 	case "terminal.command":
 		if err := json.Unmarshal([]byte(value), &s.Terminal.Command); err != nil {

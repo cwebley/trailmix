@@ -115,9 +115,6 @@ func transcriptMarkdown(snapshot transcriptSnapshot) string {
 }
 
 func exportTranscript(p paths, note meetingNote) (string, error) {
-	if err := validateNote(note); err != nil {
-		return "", err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	guard, err := artifactLock(ctx, p, note.ID)
@@ -125,6 +122,14 @@ func exportTranscript(p paths, note meetingNote) (string, error) {
 		return "", err
 	}
 	defer guard.Close()
+	// Title may have changed the basename while this exporter waited.
+	note, err = readMeeting(p, note.ID)
+	if err != nil {
+		return "", err
+	}
+	if err := validateNote(note); err != nil {
+		return "", err
+	}
 	// Read after locking: an older ask snapshot must never replace a newer
 	// sidecar published by stop or retry. Ask retains its own evidence snapshot.
 	snapshot, err := readTranscript(note.Directory, note.ID)

@@ -168,6 +168,15 @@ func testPaths(t *testing.T) paths {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	// Lifecycle tests must opt into automatic jobs with a fake assistant. Never
+	// launch the default real provider from a fake recorder session.
+	settingsPath := filepath.Join(home, "config", "trailmix", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"recap":{"enabled":false,"auto_name":false}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

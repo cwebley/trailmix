@@ -20,7 +20,9 @@ import (
 
 type meetingNote struct {
 	navigation.Target
-	Directory string `json:"directory,omitempty"`
+	Directory string    `json:"directory,omitempty"`
+	Title     string    `json:"title,omitempty"`
+	StartedAt time.Time `json:"started_at,omitempty"`
 }
 
 var errRecorderTransition = errors.New("recorder is starting or stopping; retry shortly")
@@ -102,8 +104,8 @@ func newNote(p paths, cfg settings.Settings, now time.Time) (meetingNote, error)
 	note := meetingNote{Target: navigation.Target{
 		ID: meeting.NewID(), Date: now.Format("2006-01-02"),
 		Session: "trailmix-" + now.Format("2006-01-02"), Window: now.Format("15:04"),
-	}}
-	text := "# Meeting {{date}} {{time}}\n\n\n"
+	}, StartedAt: now}
+	text := "# Meeting {{date}} {{time}}\n\n## Rough notes\n\n"
 	if cfg.Template != "" {
 		data, err := os.ReadFile(cfg.Template)
 		if err != nil {

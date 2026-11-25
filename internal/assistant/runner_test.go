@@ -56,6 +56,7 @@ echo '{"type":"text","part":{"text":"answer"}}'
 		var config struct {
 			Agent map[string]struct {
 				Permission map[string]string `json:"permission"`
+				Prompt     string            `json:"prompt"`
 			} `json:"agent"`
 			Share string `json:"share"`
 		}
@@ -64,6 +65,9 @@ echo '{"type":"text","part":{"text":"answer"}}'
 		}
 		if got := config.Agent[agent].Permission; len(got) != 1 || got["*"] != "deny" || config.Share != "disabled" {
 			t.Fatalf("injected agent is not deny-all: %s", data)
+		}
+		if prompt := config.Agent[agent].Prompt; !strings.Contains(prompt, "requested output format") || strings.Contains(prompt, "in Markdown") {
+			t.Fatalf("agent overrides structured recap format: %q", prompt)
 		}
 		// The user's own agent is passed through untouched, just not selected.
 		if config.Agent["trailmix-ask"].Permission["bash"] != "allow" {

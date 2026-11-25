@@ -2,6 +2,7 @@ local M = {}
 local options = {
   cli = vim.env.TRAILMIX_CLI or "trailmix", mapping = "<leader>mt", ask_mapping = "<leader>ma", transcript_mapping = "<leader>mT",
   transcript_jump_mapping = "<leader>ml", note_jump_mapping = "<leader>mh", note_jump_back_mapping = "<leader>mH",
+  recap_on_stop = true,
 }
 local pending = false
 local installed = {}
@@ -116,6 +117,13 @@ function M.setup(opts)
   end, { desc = "Ask about this meeting", range = true, force = true })
   vim.api.nvim_create_user_command("TrailMixAnswers", function() require("trailmix.ask").answers(options) end, { desc = "Open saved meeting answers", force = true })
   vim.api.nvim_create_user_command("TrailMixAskCancel", function() require("trailmix.ask").cancel() end, { desc = "Cancel this meeting's assistant request", force = true })
+  vim.api.nvim_create_user_command("TrailMixRecap", function() require("trailmix.recap").generate(options) end,
+    { desc = "Generate or regenerate this meeting's recap in the live note", force = true })
+  vim.api.nvim_create_user_command("TrailMixRecapRestore", function() require("trailmix.recap").restore(options) end,
+    { desc = "Restore this meeting's latest privately saved recap", force = true })
+  vim.api.nvim_create_user_command("TrailMixRecapCancel", function() require("trailmix.recap").cancel() end,
+    { desc = "Cancel this meeting's pending recap request", force = true })
+  require("trailmix.recap").setup(options)
   vim.api.nvim_create_user_command("TrailMixFollowCitation", function() require("trailmix.ask").follow(options) end, { desc = "Show cited transcript evidence", force = true })
   vim.api.nvim_create_user_command("TrailMixBack", function() require("trailmix.panel").back() end, { desc = "Return to the answer view", force = true })
   local group = vim.api.nvim_create_augroup("TrailMixAnswerFiles", { clear = true })

@@ -325,6 +325,10 @@ func TestMeetingNotesNeverOverwriteSameSecondOrTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	original, _ := os.ReadFile(first.Path)
+	want := "<!-- trailmix: meeting " + first.ID + " -->\n# Meeting 2026-09-24 09:30:00\n\n## Rough notes\n\n"
+	if string(original) != want {
+		t.Fatalf("default template: %q", original)
+	}
 	second, err := newNote(p, cfg, now)
 	if err != nil {
 		t.Fatal(err)
@@ -341,6 +345,24 @@ func TestMeetingNotesNeverOverwriteSameSecondOrTemplate(t *testing.T) {
 	}
 	if err := validateNote(first); err != nil {
 		t.Fatal(err)
+	}
+	custom := filepath.Join(p.home, "custom-template.md")
+	customText := "# Custom {{date}}\n\n## Agenda\n\nKeep this layout.\n"
+	if err := os.WriteFile(custom, []byte(customText), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Template = custom
+	customNote, err := newNote(p, cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customData, _ := os.ReadFile(customNote.Path)
+	if string(customData) != "<!-- trailmix: meeting "+customNote.ID+" -->\n# Custom 2026-09-24\n\n## Agenda\n\nKeep this layout.\n" {
+		t.Fatalf("custom template changed: %q", customData)
+	}
+	templateData, _ := os.ReadFile(custom)
+	if string(templateData) != customText {
+		t.Fatal("custom template overwritten")
 	}
 	cfg.Template = first.Path
 	if _, err := newNote(p, cfg, now); err == nil {

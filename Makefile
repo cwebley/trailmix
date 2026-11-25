@@ -76,3 +76,5 @@ test-neovim:
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/ask_context.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/panel_positions.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/answer_follow.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/recap.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/auto_title.lua

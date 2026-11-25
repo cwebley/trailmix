@@ -63,15 +63,29 @@ func runAnswers(p paths, command string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateNote(note); err != nil {
-		return err
-	}
 	if command == "answers" {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		guard, err := artifactLock(ctx, p, note.ID)
+		if err != nil {
+			return err
+		}
+		defer guard.Close()
+		note, err = readMeeting(p, note.ID)
+		if err != nil {
+			return err
+		}
+		if err := validateNote(note); err != nil {
+			return err
+		}
 		view, err := readAnswers(note)
 		if err != nil {
 			return err
 		}
 		return cliout.JSON(view, false)
+	}
+	if err := validateNote(note); err != nil {
+		return err
 	}
 	input := askInput{Question: *question}
 	if *question == "" {
@@ -201,14 +215,21 @@ func ask(ctx context.Context, p paths, note meetingNote, input askInput) (view a
 	if err := meeting.WriteJSON(filepath.Join(directory, "answer.json"), record); err != nil {
 		return view, err
 	}
-	if err := validateNote(note); err != nil {
-		return view, err
-	}
 	guard, err := artifactLock(ctx, p, note.ID)
 	if err != nil {
 		return view, err
 	}
 	defer guard.Close()
+	// A provider can take minutes. Resolve the current association only after
+	// acquiring the artifact lock, never validate or publish to the old path.
+	note, err = readMeeting(p, note.ID)
+	if err != nil {
+		return view, err
+	}
+	if err := validateNote(note); err != nil {
+		return view, err
+	}
+	transcriptPath = sidecarPath(note, "transcript")
 	view, err = readAnswers(note)
 	if err != nil {
 		return view, err

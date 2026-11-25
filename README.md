@@ -67,6 +67,28 @@ Notes default to `~/Documents/TrailMix/YYYY-MM-DD/HH-MM-SS.md` in local time. Co
 
 TrailMix prefers the invoking tmux client's best available identity, captured before recorder startup, then the most recently active eligible attached client. When several clients share a pane, tmux cannot identify the invoking client from `TMUX_PANE` alone. A tmux binding can supply `TRAILMIX_TMUX_CLIENT` using `#{client_name}` to make that choice explicit. From an external hotkey, leave it unset. With no attached client, TrailMix runs the terminal command and waits for a client to attach. This slice uses the invoking tmux server or the default server from an external hotkey.
 
+### Naming a meeting
+
+Notes start with second-resolution filenames, such as `10-31-00.md`. By default, the first successful recap selects a short descriptive title for an unnamed note that still has its exact built-in heading and timestamp-only filename. Custom headings, manually assigned names, and custom filenames are preserved. Later recaps do not change the selected name, even if the first rename is still pending. A named note uses the start hour and minute plus a descriptive slug, such as `10-31-engineering-product-standup.md`.
+
+Renaming waits until capture/retry is idle and the meeting's editors and sidecars are closed. Save your notes and close the editor normally; the plugin starts a detached retry during closure. It never saves, closes, or discards a buffer to make a rename happen. Known recovery swap files keep the name pending and are never deleted automatically. Disable automatic naming with `trailmix config set recap.auto_name false`; this also stops pending automatic names from being applied. You can still choose a name explicitly:
+
+```sh
+trailmix title --meeting MEETING_ID "Engineering product standup"
+```
+
+The command updates the main heading, moves existing transcript and answers sidecars, and updates saved note associations. The meeting ID, original capture times, audio storage, and passage citations do not change. Filename collisions receive a numeric suffix rather than overwriting another meeting.
+
+The explicit command also requires capture to be stopped and the meeting's editor to be closed. Use `trailmix open` to reopen the latest meeting at its new path. Close copies of the note or sidecars in external editors too; TrailMix checks managed editors and registered Neovim instances but cannot discover arbitrary unregistered editors. Do not open those files while renaming runs. Renaming refuses unsafe or ambiguous known editor state rather than risking unsaved text. Error rollback retains recovery copies when it cannot safely restore files, but this is not a crash-recoverable multi-file transaction. Do not rename meeting files with a plain filesystem move; TrailMix also stores their paths outside the notes directory.
+
+Pending automatic names are stored privately with the recording. There is no permanent naming daemon. Closure retries have a bounded wait; a crash, slow shutdown, or active capture may leave a name pending. To retry an existing selection without a provider request:
+
+```sh
+trailmix title --meeting MEETING_ID --pending
+```
+
+Opening a historical note does not select a new name. Explicit recap generation or enqueueing may select one if the note is still eligible.
+
 ### Recording indicator in tmux
 
 While capture is active or has failed, the recorder sets the tmux user option `@trailmix_rec` on the server it was launched from (the default server from an external hotkey) and redraws attached clients. Add this to your status line:
@@ -106,7 +128,7 @@ After selecting the note, TrailMix brings forward the terminal hosting that tmux
 trailmix config
 trailmix config set notes_root "$HOME/notes/meetings"
 trailmix config set template "$HOME/notes/meeting-template.md"
-trailmix config set template ''       # Use the built-in dated heading
+trailmix config set template ''       # Use the built-in heading and Rough notes section
 trailmix config set microphone ''     # Use the system-default microphone
 trailmix config set microphone 'ID'   # Pin an ID from trailmix devices
 ```
@@ -194,6 +216,67 @@ trailmix transcript --meeting MEETING_ID --json
 ```
 
 It returns the verified `meeting_id`, `passages`, `transcription` status, and `duration_seconds` when session metadata exists. `--meeting` and `--output` are mutually exclusive. Omitting both retains the CLI's current-or-last-recording behavior. The JSON interface checks the association, recording, status, and passage identities without falling back to a newer meeting.
+
+### Meeting recaps
+
+The built-in meeting template starts with a dated heading and `## Rough notes`. Type your notes underneath. Custom template files are left unchanged.
+
+After a workspace meeting stops and transcription finishes draining, the recorder queues a detached recap job. Generation runs even when Neovim is closed and uses the same assistant/provider settings as meeting questions. The worker uses a live unsaved note snapshot when one unambiguous registered editor can supply it; otherwise it uses saved notes. It saves results in private recording storage. Recap generation never rewrites the main note file; automatic naming is a separate guarded transaction that changes only the heading and filenames after editors close.
+
+Automatic generation is enabled by default for future meetings. Disable provider requests after stop with `trailmix config set recap.enabled false`. The plugin option `recap_on_stop = false` disables automatic discovery and insertion in that editor, not the recorder's background generation.
+
+The result appears in the same note, above your rough notes:
+
+```markdown
+# Meeting title
+
+## Summary
+
+## Observations
+
+## Questions to follow up
+
+## My commitments
+
+## Rough notes
+```
+
+TrailMix updates the live buffer, not the file on disk. It does not save, reload the note, or change focus. You can keep typing while generation runs; current rough notes are preserved when the result arrives. If they changed since the request snapshot, a notice says to regenerate to include those edits. Save the note yourself when ready. Recap insertion is undoable.
+
+```vim
+:TrailMixRecap
+:TrailMixRecapCancel
+:TrailMixRecapRestore
+```
+
+`TrailMixRecap` generates again and replaces the previous generated sections, including your edits within them. The comments `<!-- trailmix: recap begin -->` and `<!-- trailmix: recap end -->` identify those sections; keep them. An internal result-ID comment identifies the recap already inserted, so reopening a saved note does not discard edits to the same recap. Rough notes are never replaced. `TrailMixRecapRestore` inserts the latest privately saved result without running the assistant again. Closing or replacing the source buffer while a request runs leaves the result in private storage rather than applying it to another buffer.
+
+For an older plain note without `## Rough notes`, the first recap keeps the meeting identity and heading at the top and wraps the remaining original content in a Rough notes section without changing its text. Ambiguous layouts, duplicate boundaries, and existing unmarked recap sections are refused rather than overwritten. Add a single `## Rough notes` boundary yourself to clarify a custom template. Manually organized recaps are not automatically adopted or replaced.
+
+The plugin checks loaded meeting notes for ready results, including hidden buffers and other tabs. It verifies the meeting marker against the current associated main-note path; copied notes and sidecars are not insertion targets. Opening a historical note may insert an existing saved result, but never starts a new provider request. Existing meetings are not backfilled simply by upgrading.
+
+Automatic insertion defers while a cursor is inside the generated recap region. It also refuses ambiguous layouts, non-writable buffers, and known multiple editing copies across registered Neovim instances. A swap-file warning blocks automatic insertion for that buffer session; resolve recovery yourself, then use `TrailMixRecapRestore` explicitly. TrailMix never deletes swaps or chooses a recovery action. Editor registrations contain only process IDs and local control-socket paths under `TRAILMIX_HOME/recap-editors/`, with owner-only permissions. Arbitrary external editors cannot all be discovered. Keep copies in unregistered editors closed while automatic naming is pending.
+
+The first recap's title is selected automatically for eligible unnamed notes, then applied through the safe rename transaction once editors close. Generated title suggestions from later recaps do not replace that selection. Failed recap jobs retain their inputs and errors, and retries are bounded rather than running indefinitely. `TrailMixRecapCancel` cancels the local request or asks the detached worker to cancel its active job; an already completed result remains available for explicit restore.
+
+Important claims link to finalized transcript passages. Place the cursor on a recap citation and run `:TrailMixFollowCitation` to open its evidence; `:TrailMixBack` returns to the note. The prompt separates facts from interpretations, checks questions against the transcript, and restricts personal commitments to clearly accepted work. Capture and transcription warnings remain visible. Valid citations prove that the passage exists, not that the assistant interpreted it correctly; review the result and its sources. Audio track names are not speaker identities.
+
+CLI generation saves the recap privately. With automatic naming enabled, an eligible closed note may also be renamed:
+
+```sh
+trailmix recap --meeting MEETING_ID           # Generate from saved notes
+trailmix recap --meeting MEETING_ID --latest  # Read the latest saved result
+trailmix recap --meeting MEETING_ID --status  # Inspect job and editor-conflict state
+trailmix recap --meeting MEETING_ID --enqueue # Explicitly queue an older meeting
+trailmix recap --meeting MEETING_ID --cancel  # Cancel an active background job
+trailmix recap --meeting MEETING_ID --recover REQUEST_ID # Revalidate a retained failed response without a provider call
+```
+
+Job states are `none`, `queued`, `generating`, `ready`, `failed`, and `cancelled`. The same status response includes `title_state`, `title`, and `title_error` when a naming selection exists. A ready recap can still have a pending name because an editor, recovery swap, or active capture blocks renaming. There is no permanent daemon. A worker killed by a crash or reboot is reported as interrupted/failed when status is next read; use `--enqueue` to retry it explicitly. Status reads never invoke the assistant. A `ready` result means it is saved privately, not that an editor has saved it into the Markdown note.
+
+`--recover` revalidates a failed request's saved assistant response against its retained finalized evidence. It does not run the assistant or take a fresh notes snapshot. Recovery refuses active jobs, invalid output, mismatched identities, and replacement of a different saved successful result. A recovered result follows normal safe editor pickup and automatic naming; it does not save a live buffer.
+
+The editor uses `--stdin` with one JSON object containing `notes` and `note_path` to include unsaved text. Optional `editor_pid` and `editor_swap_paths` metadata keep automatic naming deferred for the calling editor and its known recovery files, including if it closes or crashes during generation. Results return JSON with generated Markdown, a suggested title, and the exact notes snapshot. Request snapshots and results live under the recording's private `recaps/` directory, not beside the note. Generation uses the existing context/output limits, timeout and cancellation handling. Recap output must follow the structured format requested in its prompt, even when `assistant.format` is `markdown`.
 
 ### Ask about a meeting
 
@@ -396,9 +479,13 @@ The Neovim companion drives the CLI, and scripts can do the same. Commands with 
 | --- | --- |
 | `status`, `stop`, `record` | Recording status |
 | `start`, `toggle`, `open` | Recording status, or the meeting association when nothing is recording |
+| `title --meeting ID TITLE` | Updated meeting association |
 | `transcript --json` | Finalized passages with transcription and capture health (plain text without `--json`) |
 | `retry` | Final transcription state; the helper's repair progress goes to stderr |
 | `ask`, `answers` | The saved answers view |
+| `recap --meeting ID [--stdin | --latest]` | Generated recap, suggested title and source notes snapshot |
+| `recap --meeting ID --status` | Job state, associated note path and known editor conflicts |
+| `recap --meeting ID --enqueue`, `--cancel` | Queued, cancelled or existing recap job state |
 | `devices`, `auth status`, `config show` | Microphones, credential presence, or settings |
 | `doctor --json` | The check list, under `checks` |
 
@@ -430,6 +517,11 @@ By default, recordings live under `~/Library/Application Support/TrailMix/record
 | `transcription/*.turn.json` | Durable turn ranges and locally detected silence. |
 | `transcription/*.passage.json` | Immutable finalized evidence, source ranges, provider identities, usage, and latency measurements. |
 | `transcription/status.json` | Latest transcription state, provisional text, incomplete ranges, and duration/cost estimates. |
+| `recaps/job.json` | Durable one-meeting recap job state, attempt counts and source notes snapshot. |
+| `recaps/worker.log` | Private detached-worker diagnostics. |
+| `recaps/REQUEST_ID/` | Retained recap inputs, finalized evidence snapshot, prompt, runner output and result. |
+| `recaps/latest.json` | Latest successful recap, independent of whether it was inserted or saved in the note. |
+| `recaps/title.json` | First selected automatic title, naming state, and known editor/recovery safeguards. |
 
 CAF files appear when the first audio buffer arrives. Permission failures can leave a session record without audio files.
 

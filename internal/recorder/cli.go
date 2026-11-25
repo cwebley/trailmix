@@ -30,7 +30,9 @@ const usage = `TrailMix meeting capture, transcription, and notes (macOS 15+)
   trailmix record [--mic ID] [--output DIR] [--transcribe] [--max-duration 3h]  Low-level background capture
   trailmix toggle                       Start a meeting, or stop active capture
   trailmix open                         Open active or most recent meeting notes
-  trailmix config [show | set KEY VALUE] Configure notes_root, template, microphone
+  trailmix title --meeting ID TITLE      Rename a stopped meeting's note and sidecars
+  trailmix title --meeting ID --pending  Retry a saved automatic title without generating
+  trailmix config [show | set KEY VALUE] Configure notes_root, template, microphone, recap.enabled, recap.auto_name
   trailmix status                       Show active or last recording as JSON
   trailmix status --tmux                Short recording label for a tmux status line
   trailmix stop                         Stop and finalize local tracks
@@ -38,6 +40,11 @@ const usage = `TrailMix meeting capture, transcription, and notes (macOS 15+)
   trailmix transcript --meeting ID --export  Write the transcript beside its note
   trailmix ask --meeting ID [--question TEXT]  Ask the configured assistant; otherwise reads JSON stdin
   trailmix answers --meeting ID          Read saved AI answers as JSON
+  trailmix recap --meeting ID [--stdin | --latest]  Generate or read a saved meeting recap
+  trailmix recap --meeting ID --stdin --auto  Reuse an existing recap or generate once
+  trailmix recap --meeting ID --status   Inspect background recap state without generating
+  trailmix recap --meeting ID --enqueue  Queue or retry a background recap explicitly
+  trailmix recap --meeting ID --cancel   Cancel the current background recap job
   trailmix retry [--output DIR]          Retry incomplete transcription after stop
   trailmix version                      Print the version
 
@@ -63,7 +70,7 @@ func Run(args []string) error {
 		return err
 	}
 	switch args[0] {
-	case "start", "record", "toggle", "open", "stop":
+	case "start", "record", "toggle", "open", "stop", "title":
 		guard, err := lifecycleLock(p)
 		if err != nil {
 			return err
@@ -71,6 +78,14 @@ func Run(args []string) error {
 		defer guard.Close()
 	}
 	switch args[0] {
+	case "recap":
+		return runRecap(p, args[1:])
+	case "_recap-worker":
+		return runRecapWorker(p, args[1:])
+	case "_title-worker":
+		return runTitleWorker(p, args[1:])
+	case "title":
+		return titleCommand(p, args[1:])
 	case "doctor":
 		return doctor(p, args[1:])
 	case "ask", "answers":
@@ -224,6 +239,14 @@ func transcriptCommand(p paths, args []string) error {
 		*output = s.Directory
 	}
 	if args[0] == "retry" {
+		// Reserve the short interval before capture.lock is acquired, just as
+		// launch does. A recap snapshot must not steal this target's native
+		// guard after retry has acquired the global recorder lock.
+		workspace, err := lifecycleLock(p)
+		if err != nil {
+			return err
+		}
+		defer workspace.Close()
 		// Keep the recorder lock for the whole retry so capture cannot restart
 		// while this command is reading its queues.
 		guard, err := lock(p)
@@ -248,6 +271,7 @@ func transcriptCommand(p paths, args []string) error {
 		if err := syscall.Flock(int(nativeGuard.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			return errors.New("native capture is still finalizing; retry shortly")
 		}
+		workspace.Close() // Native guard now excludes recap; do not hold this through provider work.
 		prepare := exec.CommandContext(ctx, p.helper, "prepare-stream", "--output", *output)
 		prepare.Env = captureEnvironment()
 		// Repair output is progress. Stdout carries only the final state.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/cwebley/trailmix/internal/auth"
 	"github.com/cwebley/trailmix/internal/meeting"
+	"github.com/cwebley/trailmix/internal/settings"
 	"github.com/cwebley/trailmix/internal/transcription"
 )
 
@@ -294,6 +295,25 @@ func serve(p paths, output, mic string) error {
 	listener.Close()
 	<-acceptDone
 	clients.Wait()
+	// The stop response has already been delivered. A detached, one-meeting
+	// worker starts only after capture, transcription drain, export, and release
+	// of the recorder lock. It never extends stop's provider wait time.
+	guard.Close()
+	if p.meetingID != "" && p.transcribe {
+		cfg, configErr := settings.Read()
+		var recapErr error
+		if configErr != nil {
+			recapErr = configErr
+		} else if cfg.Recap.Enabled {
+			recapErr = enqueueRecap(p, id)
+		}
+		if recapErr != nil {
+			// The detached recorder's stderr is its owner-only launch log.
+			// After unlocking, even session.json can have a newer embedded note
+			// association from a rename. Never publish the old snapshot again.
+			fmt.Fprintln(os.Stderr, "Background recap:", recapErr)
+		}
+	}
 	return err
 }
 
