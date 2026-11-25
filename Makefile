@@ -71,4 +71,8 @@ test-neovim:
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/transcript.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/capture_health.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/note_jump.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/note_open.lua
 	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/ask.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/ask_context.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/panel_positions.lua
+	nvim --headless -u NONE --noplugin -i NONE -l tests/nvim/answer_follow.lua

@@ -71,6 +71,9 @@ func TestAskCLIUsesSnapshotsAndPreservesNotes(t *testing.T) {
 	if got.MeetingID != id || !strings.Contains(got.Markdown, "[01:02](trailmix://meetings/"+id+"/passages/system-1)") {
 		t.Fatalf("uncited answer: %s", out)
 	}
+	if !strings.Contains(got.Markdown, "### Selected note text\n\n> unsaved question") {
+		t.Fatalf("answer lost the selected context: %s", out)
+	}
 	data, _ := os.ReadFile(notePath)
 	if string(data) != marker+"- original on disk\n" {
 		t.Fatal("source note overwritten")
@@ -86,6 +89,23 @@ func TestAskCLIUsesSnapshotsAndPreservesNotes(t *testing.T) {
 	info, _ := os.Stat(got.Path)
 	if info.Mode().Perm() != 0600 {
 		t.Fatal("answers are not owner-only")
+	}
+	// Invalid selection provenance is rejected before starting an assistant.
+	for _, selection := range []askInput{
+		{Question: "Explain", Selection: "Friday", SelectionSource: "unknown"},
+		{Question: "Explain", Selection: "Friday", SelectionSource: "note", SelectionPassageIDs: []string{"system-1"}},
+		{Question: "Explain", Selection: "Friday", SelectionSource: "transcript"},
+		{Question: "Explain", Selection: "Friday", SelectionSource: "transcript", SelectionPassageIDs: []string{"missing"}},
+		{Question: "Explain", Selection: "Friday", SelectionSource: "transcript", SelectionPassageIDs: []string{"system-1", "system-1"}},
+	} {
+		payload, _ := json.Marshal(selection)
+		if out, err := run(string(payload), "ask", "--meeting", id); err == nil {
+			t.Fatalf("invalid selection accepted: %+v %s", selection, out)
+		}
+	}
+	requests, _ := filepath.Glob(filepath.Join(dir, "answers", "*"))
+	if len(requests) != 1 {
+		t.Fatalf("invalid selections started assistant requests: %v", requests)
 	}
 	// Preserve existing disk edits and serialize concurrent appends.
 	write(got.Path, got.Markdown+"\nManual annotation retained.\n")
@@ -164,6 +184,31 @@ func TestAskCLIUsesSnapshotsAndPreservesNotes(t *testing.T) {
 		cmd.Dir = "../.."
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("ask editor/CLI integration: %v %s", err, out)
+		}
+		records, _ := filepath.Glob(filepath.Join(dir, "answers", "*", "answer.json"))
+		var unsaved, saved bool
+		for _, path := range records {
+			data, _ := os.ReadFile(path)
+			var record answerRecord
+			if err := json.Unmarshal(data, &record); err != nil {
+				t.Fatal(err)
+			}
+			if record.State != "complete" || record.Input.SelectionSource != "transcript" {
+				continue
+			}
+			if record.Input.Selection != "Friday is tentative." || len(record.Input.SelectionPassageIDs) != 1 || record.Input.SelectionPassageIDs[0] != "system-1" {
+				t.Fatalf("editor lost transcript provenance: %+v", record.Input)
+			}
+			unsaved = unsaved || strings.Contains(*record.Input.Notes, "unsaved editor question")
+			saved = saved || strings.Contains(*record.Input.Notes, "original on disk")
+			prompt, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "received.txt"))
+			encoded, _ := json.Marshal(*record.Input.Notes)
+			if !strings.Contains(string(prompt), `"selected_text":"Friday is tentative."`) || !strings.Contains(string(prompt), `"selection_source":"transcript"`) || !strings.Contains(string(prompt), string(encoded)) {
+				t.Fatalf("transcript-origin prompt omitted context: %s", prompt)
+			}
+		}
+		if !unsaved || !saved {
+			t.Fatalf("transcript requests missed note snapshots: unsaved=%v saved=%v", unsaved, saved)
 		}
 	}
 	write(got.TranscriptPath, "user-owned transcript file")

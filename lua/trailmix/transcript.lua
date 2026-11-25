@@ -54,6 +54,7 @@ local function moved(view)
     if vim.api.nvim_win_is_valid(window) and vim.api.nvim_win_get_buf(window) == view.buffer
       and not vim.deep_equal(position(view, window), previous) then
       view.follow = false
+      vim.b[view.buffer].trailmix_follow = false
       view.navigation = nil
     end
   end
@@ -72,13 +73,51 @@ end
 local function note_window(id)
   for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     local buffer = vim.api.nvim_win_get_buf(window)
-    if vim.b[buffer].trailmix_kind == nil and note.id(buffer) == id then return window, buffer end
+    if note.is_note(buffer, id) then return window, buffer end
   end
 end
 
 local function current_view()
   local view = views[vim.api.nvim_get_current_buf()]
   if view and valid(view) then return view end
+end
+
+-- Snapshot finalized text before leaving visual mode or opening an async prompt.
+-- Display headers and provisional provider text are never quoted as evidence.
+function M.ask_context(lines)
+  local view = current_view()
+  if not view then return nil, "ask from the meeting note or its transcript" end
+  view.follow, view.navigation = false, nil
+  vim.b[view.buffer].trailmix_follow = false
+  local result = { selection_source = "transcript", selection_passage_ids = {} }
+  local quoted, seen, previous = {}, {}, nil
+  if not lines then
+    local passage = passage_at(view, vim.api.nvim_win_get_cursor(0)[1])
+    if passage then
+      lines = {}
+      for row, key in ipairs(view.keys or {}) do
+        if key:match("^text:(.+):%d+$") == passage.id then
+          lines[#lines + 1] = { row = row, text = view.lines[row] }
+        end
+      end
+    end
+  end
+  for _, line in ipairs(lines or {}) do
+    local key = (view.keys or {})[line.row] or ""
+    if key:match("^provisional:") then return nil, "select finalized transcript text to ask about it" end
+    local owner = passage_at(view, line.row)
+    if owner and vim.trim(owner.text) ~= "" and key:match("^text:") then
+      if previous and previous ~= owner.id then quoted[#quoted + 1] = "" end
+      quoted[#quoted + 1], previous = line.text, owner.id
+      if not seen[owner.id] then
+        result.selection_passage_ids[#result.selection_passage_ids + 1] = owner.id
+        seen[owner.id] = true
+      end
+    end
+  end
+  result.selection = table.concat(quoted, "\n")
+  if vim.trim(result.selection) == "" then return nil, "place the cursor on or select finalized transcript text" end
+  return result
 end
 
 -- Selected transcript lines, then leave visual mode.
@@ -175,9 +214,12 @@ local function render(view)
     view.lines, view.keys = result.lines, result.keys
   end
   view.passages = result.passages
+  require("trailmix.panel").track_rows(view.buffer, view.keys)
   if view.follow then
     vim.api.nvim_win_call(view.window, function() vim.cmd("normal! G") end)
   end
+  if view.snapshot then require("trailmix.panel").restore(view.window, view.follow) end
+  vim.b[view.buffer].trailmix_follow = view.follow
   remember_positions(view)
   navigate(view)
 end
@@ -257,8 +299,8 @@ local function open(id, opts, target, origin)
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.b[buffer].trailmix_kind = "transcript"
   vim.b[buffer].trailmix_meeting = id
-  local window = require("trailmix.panel").show(buffer, false, origin)
-  local view = { id = id, buffer = buffer, window = window, tab = tab, cli = opts.cli, interval = math.max(100, opts.transcript_refresh_ms or 1000) }
+  local window, resumed = require("trailmix.panel").show(buffer, false, origin)
+  local view = { id = id, buffer = buffer, window = window, tab = tab, cli = opts.cli, interval = math.max(100, opts.transcript_refresh_ms or 1000), follow = resumed and resumed.follow }
   views[buffer] = view
   vim.api.nvim_buf_set_name(buffer, "trailmix://transcript/" .. id .. "/" .. buffer)
   vim.bo[buffer].bufhidden = "wipe"
@@ -286,6 +328,7 @@ local function open(id, opts, target, origin)
     local selecting = vim.api.nvim_get_current_buf() == buffer and (mode == "v" or mode == "V" or mode == "\022" or mode == "s" or mode == "S" or mode == "\019")
     if selecting then
       view.follow, view.navigation, view.selecting = false, nil, true
+      vim.b[buffer].trailmix_follow = false
     elseif view.selecting then
       view.selecting = false
       vim.schedule(function() if valid(view) then render(view) end end)
@@ -294,6 +337,7 @@ local function open(id, opts, target, origin)
   vim.api.nvim_create_autocmd("CmdlineEnter", { group = view.group, callback = function()
     if vim.api.nvim_get_current_buf() == buffer and (vim.fn.getcmdtype() == "/" or vim.fn.getcmdtype() == "?") then
       view.follow, view.navigation, view.searching = false, nil, true
+      vim.b[buffer].trailmix_follow = false
     end
   end })
   vim.api.nvim_create_autocmd("CmdlineLeave", { group = view.group, callback = function()
@@ -368,10 +412,33 @@ local function show_candidate()
   vim.notify(string.format("TrailMix: %s · %s · %d of %d", anchors.format(candidate.seconds), relation, cycle.index, #cycle.candidates), vim.log.levels.INFO)
 end
 
--- From a passage, go to the note anchor closest to it in time; from the note,
+-- A saved export has no live view or polling process. Only recognize the
+-- generated transcript marker, and use the last passage header above the cursor.
+local function saved_transcript()
+  local buffer = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(buffer, 0, -1, false)
+  local id = (lines[1] or ""):match("^<!%-%- trailmix: transcript ([%x]+) %-%->$")
+  if not id or #id ~= 32 or note.id(buffer) ~= id then return end
+  local passage
+  for row = 1, vim.api.nvim_win_get_cursor(0)[1] do
+    local stamp = lines[row]:match("^## ([%d:]+)–[%d:]+ · ")
+    if stamp then
+      local h, m, s = stamp:match("^(%d%d+):(%d%d):(%d%d)$")
+      if not h then m, s = stamp:match("^(%d%d):(%d%d)$"); h = "0" end
+      h, m, s = tonumber(h), tonumber(m), tonumber(s)
+      passage = h and m and s and m < 60 and s < 60 and { start = h * 3600 + m * 60 + s } or nil
+    end
+  end
+  return { id = id, buffer = buffer }, passage
+end
+
+-- From a passage, open the note and go to its closest anchor; from the note,
 -- step through the remaining candidates. Step is 1 forward or -1 back.
 function M.note_jump(step)
   local view = current_view()
+  local passage
+  if view then passage = passage_at(view, vim.api.nvim_win_get_cursor(0)[1])
+  else view, passage = saved_transcript() end
   if not view then
     local buffer, window = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
     if cycle and cycle.buffer == buffer and cycle.window == window
@@ -384,12 +451,22 @@ function M.note_jump(step)
     end
     return
   end
-  local passage = passage_at(view, vim.api.nvim_win_get_cursor(0)[1])
   if not passage then notify("place the cursor on a transcript passage"); return end
   local window, buffer = note_window(view.id)
-  if not window then notify("open this meeting's note in this tab to jump to it"); return end
+  if not window then
+    local problem
+    buffer, problem = note.resolve(view.id, view.buffer)
+    if not buffer then notify(problem); return end
+    local ok, err = pcall(function()
+      vim.cmd("leftabove vsplit")
+      window = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(window, buffer)
+    end)
+    if not ok then notify(tostring(err)); return end
+  end
+  vim.api.nvim_set_current_win(window)
   local candidates = anchors.list(buffer)
-  if #candidates == 0 then notify("this meeting's note has no timestamps"); return end
+  if #candidates == 0 then cycle = nil; notify("this meeting's note has no timestamps"); return end
   table.sort(candidates, function(a, b)
     local da, db = math.abs(a.seconds - passage.start), math.abs(b.seconds - passage.start)
     if da ~= db then return da < db end

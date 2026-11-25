@@ -106,7 +106,12 @@ function M.setup(opts)
     { desc = "Step back to the previous note timestamp candidate", force = true })
   vim.api.nvim_create_user_command("TrailMixAsk", function(command)
     local selection
-    if command.range > 0 then selection = table.concat(vim.api.nvim_buf_get_lines(0, command.line1 - 1, command.line2, false), "\n") end
+    if command.range > 0 then
+      selection = {}
+      for index, text in ipairs(vim.api.nvim_buf_get_lines(0, command.line1 - 1, command.line2, false)) do
+        selection[index] = { row = command.line1 + index - 1, text = text }
+      end
+    end
     require("trailmix.ask").ask(options, selection)
   end, { desc = "Ask about this meeting", range = true, force = true })
   vim.api.nvim_create_user_command("TrailMixAnswers", function() require("trailmix.ask").answers(options) end, { desc = "Open saved meeting answers", force = true })

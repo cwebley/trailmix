@@ -31,7 +31,8 @@ function M.attach(buffer, opts)
     or not vim.api.nvim_buf_get_name(buffer):match("%.answers%.md$") then return end
   local first = vim.api.nvim_buf_get_lines(buffer, 0, 1, false)[1] or ""
   local id = first:match("^<!%-%- trailmix: answers ([%x]+) %-%->$")
-  if not id or #id ~= 32 or note.id(buffer) ~= id then return end
+  local meeting = vim.api.nvim_buf_get_lines(buffer, 1, 2, false)[1]
+  if not id or #id ~= 32 or meeting ~= "<!-- trailmix: meeting " .. id .. " -->" then return end
   vim.b[buffer].trailmix_kind, vim.b[buffer].trailmix_meeting = "answers", id
   panel.wrap_answers(buffer)
   panel.keys(buffer)
@@ -51,7 +52,7 @@ function M.follow(opts, fallback)
     if not first then break end
     if column >= first and column <= last and #id == 32 then
       if identity() and identity() ~= id then notify("citation belongs to another meeting"); return end
-      local origin = { buffer = vim.api.nvim_get_current_buf(), position = vim.fn.winsaveview() }
+      local origin = { buffer = vim.api.nvim_get_current_buf(), window = vim.api.nvim_get_current_win(), position = vim.fn.winsaveview() }
       require("trailmix.transcript").open(id, opts, passage, origin)
       return
     end
@@ -80,11 +81,12 @@ function M.answers(opts)
   local id = identity()
   if not id then notify("this note needs exactly one valid meeting ID"); return end
   local buffer = buffer_for(id, opts)
-  panel.show(buffer, false)
+  local window = panel.show(buffer, false)
   if requests[id] then
     local pending = requests[id]
     if pending.asking then
-      panel.set_text(buffer, pending.previous .. "\n\n## Working…\n\n> " .. pending.question:gsub("\n", "\n> ") .. "\n")
+      panel.follow_answers(window)
+      panel.set_text(buffer, pending.markdown)
     end
     return
   end
@@ -101,15 +103,26 @@ function M.answers(opts)
   if ok then token.process = process else requests[id] = nil; notify("cannot launch " .. opts.cli) end
 end
 
-local function submit(opts, id, source, question, selection)
+local function working(previous, question, context)
+  local quote = ""
+  if context.selection and context.selection ~= "" then
+    quote = "\n\n### Selected " .. (context.selection_source == "transcript" and "transcript" or "note text") .. "\n\n> "
+      .. context.selection:gsub("\n", "\n> ")
+  end
+  return previous .. "\n\n## Working…\n\n> " .. question:gsub("\n", "\n> ") .. quote .. "\n"
+end
+
+local function submit(opts, id, source, question, context)
   if requests[id] then notify("a request for this meeting is already pending"); return end
   local buffer = buffer_for(id, opts)
-  panel.show(buffer, false)
+  local window = panel.show(buffer, false)
+  panel.follow_answers(window, true)
   local previous = table.concat(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), "\n")
   if previous == "" then previous = "<!-- trailmix: meeting " .. id .. " -->\n# AI answers\n" end
-  panel.set_text(buffer, previous .. "\n\n## Working…\n\n> " .. question:gsub("\n", "\n> ") .. "\n")
-  local request = { question = question, selection = selection, notes = source.text, note_path = source.path }
-  local token = { asking = true, previous = previous, question = question }
+  local pending_text = working(previous, question, context)
+  panel.set_text(buffer, pending_text)
+  local request = vim.tbl_extend("force", context, { question = question, notes = source.text, note_path = source.path })
+  local token = { asking = true, markdown = pending_text }
   requests[id] = token
   local ok, process = pcall(vim.system, { opts.cli, "ask", "--meeting", id }, {
     text = true, stdin = vim.json.encode(request),
@@ -138,15 +151,52 @@ local function submit(opts, id, source, question, selection)
   end
 end
 
-function M.ask(opts, selection)
+local function preview(context)
+  if not context.selection or context.selection == "" then return function() end end
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.bo[buffer].bufhidden = "wipe"
+  vim.bo[buffer].filetype = "markdown"
+  local lines = vim.split(context.selection, "\n", { plain = true })
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, lines)
+  local width = math.max(1, math.min(72, vim.o.columns - 4))
+  local height = math.max(1, math.min(#lines, 8, vim.o.lines - 6))
+  local window = vim.api.nvim_open_win(buffer, false, {
+    relative = "editor", row = math.max(0, vim.o.lines - height - 5), col = math.max(0, vim.o.columns - width - 3),
+    width = width, height = height, style = "minimal", border = "rounded", focusable = false,
+    title = context.selection_source == "transcript" and " Selected transcript " or " Selected note text ",
+  })
+  vim.wo[window].wrap = true
+  return function() if vim.api.nvim_win_is_valid(window) then vim.api.nvim_win_close(window, true) end end
+end
+
+function M.ask(opts, lines, selected_context)
   if prompting then notify("an ask prompt is already open"); return end
   local buffer, window = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
-  local id = note.id(buffer)
-  if not id or vim.bo[buffer].buftype ~= "" or vim.b[buffer].trailmix_kind then notify("ask from the associated meeting note"); return end
+  local transcript = vim.b[buffer].trailmix_kind == "transcript"
+  local id = transcript and vim.b[buffer].trailmix_meeting or note.id(buffer)
+  if not id or (not transcript and (vim.bo[buffer].buftype ~= "" or vim.b[buffer].trailmix_kind
+    or vim.api.nvim_buf_get_name(buffer):match("%.transcript%.md$")
+    or vim.api.nvim_buf_get_name(buffer):match("%.answers%.md$"))) then
+    notify("ask from the meeting note or its transcript"); return
+  end
   if requests[id] then notify("a request for this meeting is already pending"); return end
+  local context, problem
+  if transcript then
+    if selected_context then context = selected_context else context, problem = require("trailmix.transcript").ask_context(lines) end
+    if not context then notify(problem); return end
+  else
+    local selected = {}
+    for _, line in ipairs(lines or {}) do selected[#selected + 1] = line.text end
+    context = { selection = table.concat(selected, "\n"), selection_source = "note" }
+  end
+  local source, err = note.find(id)
+  if err then notify(err); return end
+  local source_path = source and vim.api.nvim_buf_get_name(source)
   local path = vim.api.nvim_buf_get_name(buffer)
+  local close_preview = preview(context)
   prompting = true
-  vim.ui.input({ prompt = "Ask this meeting: ", default = (selection or ""):gsub("\n", " ") }, function(question)
+  vim.ui.input({ prompt = "Ask this meeting: ", default = "" }, function(question)
+    close_preview()
     vim.schedule(function()
       prompting = false
       if not question or vim.trim(question) == "" then return end
@@ -154,20 +204,37 @@ function M.ask(opts, selection)
       -- or opening a panel in a tab the user has since left.
       if not vim.api.nvim_buf_is_valid(buffer) or not vim.api.nvim_win_is_valid(window)
         or vim.api.nvim_get_current_win() ~= window or vim.api.nvim_get_current_buf() ~= buffer
-        or note.id(buffer) ~= id or vim.api.nvim_buf_get_name(buffer) ~= path then
-        notify("ask canceled because the source note changed"); return
+        or (transcript and vim.b[buffer].trailmix_meeting or note.id(buffer)) ~= id
+        or vim.api.nvim_buf_get_name(buffer) ~= path
+        or (source and (not vim.api.nvim_buf_is_loaded(source) or note.id(source) ~= id
+          or vim.api.nvim_buf_get_name(source) ~= source_path)) then
+        notify("ask canceled because the source changed"); return
       end
-      submit(opts, id, { path = path, text = table.concat(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), "\n") .. "\n" }, vim.trim(question), selection or "")
+      local latest, latest_err = note.find(id)
+      if latest_err or latest ~= source then notify(latest_err or "ask canceled because the associated note changed"); return end
+      local snapshot = source and { path = source_path, text = table.concat(vim.api.nvim_buf_get_lines(source, 0, -1, false), "\n") .. "\n" } or {}
+      submit(opts, id, snapshot, vim.trim(question), context)
     end)
   end)
 end
 
 function M.visual(opts)
   local mode = vim.fn.mode()
-  local selection = table.concat(vim.fn.getregion(vim.fn.getpos("v"), vim.fn.getpos("."), { type = mode, exclusive = vim.o.selection == "exclusive" }), "\n")
+  local first, last = vim.fn.getpos("v"), vim.fn.getpos(".")
+  local options = { type = mode, exclusive = vim.o.selection == "exclusive" }
+  local regions = vim.fn.getregionpos(first, last, options)
+  local lines = vim.fn.getregion(first, last, options)
+  local selection = {}
+  for index, region in ipairs(regions) do selection[index] = { row = region[1][2], text = lines[index] } end
+  -- Resolve passage ownership before leaving visual mode can refresh the view.
+  local context, problem
+  if vim.b[vim.api.nvim_get_current_buf()].trailmix_kind == "transcript" then
+    context, problem = require("trailmix.transcript").ask_context(selection)
+  end
   local escape = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
   vim.api.nvim_feedkeys(escape, "nx", false)
-  M.ask(opts, selection)
+  if problem then notify(problem); return end
+  M.ask(opts, selection, context)
 end
 
 function M.cancel()

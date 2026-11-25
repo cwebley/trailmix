@@ -337,9 +337,34 @@ func (n *Navigator) editor(note Target) (string, error) {
 	return f[0], nil
 }
 
+// A tmux pane can report nvim before its socket is reachable or its config
+// has finished loading. RPC can also answer during early startup, so require
+// VimEnter before loading/restoring the note or choosing its window.
+func (n *Navigator) waitEditor(socket string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		ready, err := run(n.nvim, "--server", socket, "--remote-expr", "v:vim_did_enter")
+		if err == nil && ready == "1" {
+			return nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("Neovim did not become ready: %w", lastErr)
+			}
+			return errors.New("Neovim has not finished startup; retry trailmix open after its configuration loads")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (n *Navigator) showNote(note Target, socket, pid string) error {
 	if socket == "" {
 		return errors.New("meeting editor has no control socket; close its pane and retry trailmix open")
+	}
+	if err := n.waitEditor(socket); err != nil {
+		return fmt.Errorf("reach meeting editor: %w", err)
 	}
 	editorPID, err := run(n.nvim, "--server", socket, "--remote-expr", "getpid()")
 	if err != nil {

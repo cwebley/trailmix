@@ -36,6 +36,15 @@ end
 local function key(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
 end
+local function window_for(kind)
+  for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.b[vim.api.nvim_win_get_buf(window)].trailmix_kind == kind then return window end
+  end
+end
+local function stacked(upper, lower, note_window)
+  local a, b, n = vim.api.nvim_win_get_position(upper), vim.api.nvim_win_get_position(lower), vim.api.nvim_win_get_position(note_window)
+  assert(a[1] < b[1] and a[2] == b[2] and a[2] > n[2], "transcript and answers were not stacked on the right")
+end
 local ok, err = xpcall(function()
   vim.cmd("edit " .. vim.fn.fnameescape(note_path))
   local note, note_window = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
@@ -77,11 +86,15 @@ local ok, err = xpcall(function()
   assert(#vim.api.nvim_tabpage_list_wins(0) == 1, "toggle command failed without a keybind")
   require("trailmix").setup({ transcript_mapping = "<leader>mT" })
   assert(not vim.wo[note_window].wrap, "toggle changed note wrapping")
-  -- Start with the transcript already open. Asking must reuse that window.
+  -- Start with the transcript already open. Asking opens beneath it and retains
+  -- both the transcript's reading position and the unsaved note snapshot.
   vim.cmd("TrailMixTranscript")
   local right
   for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do if window ~= note_window then right = window end end
   wait_for(function() return text(vim.api.nvim_win_get_buf(right)):find("Friday is tentative.", 1, true) end)
+  local transcript_window, transcript_buffer = right, vim.api.nvim_win_get_buf(right)
+  vim.api.nvim_win_set_cursor(transcript_window, { 6, 0 })
+  local transcript_cursor = vim.api.nvim_win_get_cursor(transcript_window)
   local prompt_options
   vim.ui.input = function(options, callback)
     prompt_options = options
@@ -89,25 +102,33 @@ local ok, err = xpcall(function()
   end
   vim.api.nvim_win_set_cursor(note_window, { 3, 0 })
   key("V<F6>")
-  wait_for(function() return vim.b[vim.api.nvim_win_get_buf(right)].trailmix_kind == "answers" end)
+  wait_for(function() return window_for("answers") end)
+  right = window_for("answers")
   local answer_buffer = vim.api.nvim_win_get_buf(right)
-  assert(prompt_options.default == "- did we test feature A?", "visual selection did not prefill prompt")
-  assert(#vim.api.nvim_tabpage_list_wins(0) == 2, "ask opened a third window")
+  assert(prompt_options.default == "", "selection was used as the question")
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 3, "ask did not preserve the transcript")
+  stacked(transcript_window, right, note_window)
+  assert(vim.api.nvim_win_get_buf(transcript_window) == transcript_buffer and vim.deep_equal(vim.api.nvim_win_get_cursor(transcript_window), transcript_cursor), "ask moved the transcript reader")
   assert(text(answer_buffer):find("Working…", 1, true), "no pending answer indicator")
   assert(vim.api.nvim_get_current_win() == note_window, "ask stole focus")
   wait_for(function() return text(answer_buffer):find("The review is tentative.", 1, true) end)
   local sent = vim.json.decode(table.concat(vim.fn.readfile(directory .. "/request.json"), "\n"))
-  assert(sent.selection == "- did we test feature A?" and sent.question == "What testing was confirmed?")
+  assert(sent.selection == "- did we test feature A?" and sent.selection_source == "note" and sent.question == "What testing was confirmed?")
   assert(sent.notes:find("unsaved agenda item", 1, true) and vim.fn.resolve(sent.note_path) == vim.fn.resolve(note_path), "ask missed unsaved note context: " .. vim.inspect(sent))
   assert(text(note) == original and vim.bo[note].modified, "ask changed or saved source notes")
   assert(vim.api.nvim_get_current_win() == note_window, "completed answer stole focus")
   key(toggle_key)
-  assert(#vim.api.nvim_tabpage_list_wins(0) == 2 and vim.b[vim.api.nvim_win_get_buf(right)].trailmix_kind == "transcript", "toggle did not reuse answer slot")
-  vim.api.nvim_set_current_win(right)
-  vim.cmd("TrailMixBack")
-  assert(vim.api.nvim_win_get_buf(right) == answer_buffer, "toggle lost the answer view")
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 2 and vim.api.nvim_win_get_buf(right) == answer_buffer, "closing transcript lost the answer view")
+  local full_height = vim.api.nvim_win_get_height(right)
+  key(toggle_key)
+  transcript_window = window_for("transcript")
+  transcript_buffer = vim.api.nvim_win_get_buf(transcript_window)
+  wait_for(function() return text(transcript_buffer):find("Friday is tentative.", 1, true) end)
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 3 and vim.api.nvim_win_get_height(right) < full_height, "opening transcript did not split above answers")
+  stacked(transcript_window, right, note_window)
 
-  -- Evidence uses the same window, and back restores answer and cursor.
+  -- Evidence jumps the upper transcript, leaving the answer below it. Back
+  -- returns focus and cursor to the answer without replacing either buffer.
   vim.api.nvim_set_current_win(right)
   local row = 4
   local line = vim.api.nvim_buf_get_lines(answer_buffer, row - 1, row, false)[1]
@@ -115,11 +136,27 @@ local ok, err = xpcall(function()
   local cursor = vim.api.nvim_win_get_cursor(right)
   key("gf")
   wait_for(function() return vim.api.nvim_get_current_line():find("01:02–01:05 system", 1, true) end)
-  assert(#vim.api.nvim_tabpage_list_wins(0) == 2 and vim.api.nvim_get_current_win() == right, "citation created a third window")
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 3 and vim.api.nvim_get_current_win() == transcript_window, "citation did not reuse the upper transcript")
+  assert(vim.api.nvim_win_get_buf(right) == answer_buffer, "citation replaced the answer")
   vim.wo[right].wrap, vim.wo[right].linebreak = false, false
   key("<BS>")
-  assert(vim.api.nvim_win_get_buf(right) == answer_buffer and vim.deep_equal(vim.api.nvim_win_get_cursor(right), cursor), "back did not restore answer position")
+  assert(vim.api.nvim_get_current_win() == right and vim.api.nvim_win_get_buf(right) == answer_buffer and vim.deep_equal(vim.api.nvim_win_get_cursor(right), cursor), "back did not restore answer position")
   assert(vim.wo[right].wrap and vim.wo[right].linebreak, "back did not restore answer wrapping")
+
+  -- Closing answers expands the transcript; reopening answers preserves its
+  -- reading position and uses the lower slot without taking transcript focus.
+  transcript_cursor = vim.api.nvim_win_get_cursor(transcript_window)
+  local half_height = vim.api.nvim_win_get_height(transcript_window)
+  vim.api.nvim_win_close(right, false)
+  assert(vim.api.nvim_win_get_height(transcript_window) > half_height, "transcript did not expand after closing answers")
+  vim.api.nvim_set_current_win(transcript_window)
+  vim.cmd("TrailMixAnswers")
+  right = window_for("answers")
+  assert(vim.api.nvim_get_current_win() == transcript_window and vim.deep_equal(vim.api.nvim_win_get_cursor(transcript_window), transcript_cursor), "reopening answers moved the transcript reader")
+  stacked(transcript_window, right, note_window)
+  wait_for(function() return text(answer_buffer):find("The review is tentative.", 1, true) end)
+  -- Wait for the saved-answer read to finish before issuing another question.
+  vim.wait(40, function() return false end)
 
   -- Normal mode starts with an empty prompt. Dismissing it performs no work.
   vim.api.nvim_set_current_win(note_window)
@@ -127,7 +164,17 @@ local ok, err = xpcall(function()
   key("<F6>")
   vim.wait(30, function() return false end)
   assert(not text(answer_buffer):find("Working…", 1, true))
-  vim.ui.input = function(options, callback) assert(options.default == "did", "characterwise selection was expanded"); callback(nil) end
+  vim.ui.input = function(options, callback)
+    assert(options.default == "", "characterwise selection replaced the question")
+    local found
+    for _, window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_config(window).relative ~= "" then
+        found = text(vim.api.nvim_win_get_buf(window))
+      end
+    end
+    assert(found == "did", "characterwise quote preview was expanded: " .. tostring(found))
+    callback(nil)
+  end
   vim.api.nvim_win_set_cursor(note_window, { 3, 2 })
   key("v2l<F6>")
   vim.wait(30, function() return false end)
@@ -138,7 +185,7 @@ local ok, err = xpcall(function()
   vim.cmd("TrailMixAsk")
   vim.api.nvim_set_current_win(right)
   delayed("wrong target")
-  wait_for(function() return notices[#notices] and notices[#notices]:find("source note changed", 1, true) end)
+  wait_for(function() return notices[#notices] and notices[#notices]:find("source changed", 1, true) end)
   assert(not text(answer_buffer):find("Working…", 1, true))
 
   -- A pending response can complete while evidence is visible without replacing
@@ -151,9 +198,9 @@ local ok, err = xpcall(function()
   vim.api.nvim_set_current_win(right)
   vim.api.nvim_win_set_cursor(right, cursor)
   key("gf")
-  local transcript_buffer = vim.api.nvim_win_get_buf(right)
+  transcript_buffer = vim.api.nvim_win_get_buf(transcript_window)
   wait_for(function() return not text(answer_buffer):find("Working…", 1, true) end)
-  assert(vim.api.nvim_win_get_buf(right) == transcript_buffer, "response replaced evidence being read")
+  assert(vim.api.nvim_win_get_buf(transcript_window) == transcript_buffer and vim.api.nvim_get_current_win() == transcript_window, "response replaced evidence being read or stole focus")
   vim.cmd("TrailMixBack")
   assert(vim.api.nvim_win_get_buf(right) == answer_buffer)
 
@@ -172,6 +219,7 @@ local ok, err = xpcall(function()
 
   -- Reading saved answers works after wiping the cached view, and untimestamped
   -- note sections navigate from zero rather than producing a missing-anchor error.
+  vim.api.nvim_win_close(transcript_window, false)
   vim.api.nvim_win_close(right, false)
   vim.api.nvim_buf_delete(answer_buffer, { force = true })
   vim.cmd("TrailMixAnswers")
@@ -180,10 +228,13 @@ local ok, err = xpcall(function()
   vim.api.nvim_win_set_cursor(note_window, { 4, 0 })
   vim.cmd("TrailMixTranscriptJump")
   wait_for(function() return vim.api.nvim_get_current_line():find("01:02–01:05 system", 1, true) end)
-  assert(#vim.api.nvim_tabpage_list_wins(0) == 2)
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 3)
+  transcript_window = window_for("transcript")
+  vim.api.nvim_win_close(transcript_window, false)
+  vim.api.nvim_set_current_win(right)
 
   -- Ordinary named answer files get the same citation/back behavior after a
-  -- restart; a file buffer in the existing right slot must not create a third.
+  -- restart; its evidence opens above it and Back returns to the file buffer.
   local saved = directory .. "/saved.answers.md"
   vim.fn.writefile(vim.split("<!-- trailmix: answers " .. id .. " -->\n" .. answer_text, "\n", { plain = true }), saved)
   vim.wo[right].wrap, vim.wo[right].linebreak = false, false
@@ -195,9 +246,11 @@ local ok, err = xpcall(function()
   vim.api.nvim_win_set_cursor(right, { 5, #"The review is tentative. " })
   key("gf")
   wait_for(function() return vim.api.nvim_get_current_line():find("01:02–01:05 system", 1, true) end)
-  assert(#vim.api.nvim_tabpage_list_wins(0) == 2)
+  assert(#vim.api.nvim_tabpage_list_wins(0) == 3)
   vim.cmd("TrailMixBack")
   assert(vim.api.nvim_get_current_buf() == saved_buffer)
+  transcript_window = window_for("transcript")
+  vim.api.nvim_win_close(transcript_window, false)
 
   -- Reuse the slot after :enew without abandoning unrelated unsaved text.
   vim.cmd("enew")
@@ -237,7 +290,8 @@ local ok, err = xpcall(function()
   local source_cursor = vim.api.nvim_win_get_cursor(note_window)
   vim.cmd("TrailMixFollowCitation")
   wait_for(function() return vim.api.nvim_get_current_line():find("01:02–01:05 system",1,true) end)
-  assert(vim.api.nvim_get_current_win() == right, "citation did not use the established right-hand slot")
+  transcript_window = window_for("transcript")
+  assert(vim.api.nvim_get_current_win() == transcript_window and vim.api.nvim_win_get_position(transcript_window)[2] == vim.api.nvim_win_get_position(right)[2], "citation did not use the established right-hand column")
   vim.cmd("TrailMixBack")
   assert(vim.api.nvim_get_current_buf() == source_answer and vim.deep_equal(vim.api.nvim_win_get_cursor(0), source_cursor), "back returned to the destination's old answer")
   assert(text(note) == original)

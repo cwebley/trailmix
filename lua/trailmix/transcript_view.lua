@@ -92,7 +92,7 @@ function M.render(id, snapshot, following, failure)
   end)
   for _, p in ipairs(passages) do
     finals[p.id] = true
-    result.passages[#result.passages + 1] = { id = p.id, row = #result.lines + 1, start = p.start_seconds, finish = p.end_seconds }
+    result.passages[#result.passages + 1] = { id = p.id, row = #result.lines + 1, start = p.start_seconds, finish = p.end_seconds, text = p.text }
     add("passage:" .. p.id, string.format("[%s–%s %s]", M.clock(p.start_seconds), M.clock(p.end_seconds), p.track), "Identifier")
     add("text:" .. p.id, p.text ~= "" and p.text or "(empty final)")
     add("gap:" .. p.id, "")

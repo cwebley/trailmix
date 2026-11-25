@@ -26,7 +26,7 @@ func TestEditorLoadsConfiguration(t *testing.T) {
 	if err != nil {
 		t.Skip("nvim is not installed")
 	}
-	for _, mode := range []string{"unset", "empty", "explicit"} {
+	for _, mode := range []string{"unset", "empty", "explicit", "slow-start", "early-rpc"} {
 		t.Run(mode, func(t *testing.T) {
 			// Keep Unix socket paths short, including on macOS.
 			home, err := os.MkdirTemp("/tmp", "tm-nav-")
@@ -67,7 +67,7 @@ func TestEditorLoadsConfiguration(t *testing.T) {
 			t.Cleanup(func() { _ = exec.Command(tmux, "-S", socket, "kill-server").Run() })
 			configRoot := filepath.Join(home, ".config")
 			switch mode {
-			case "unset":
+			case "unset", "slow-start", "early-rpc":
 				if err := os.Unsetenv("XDG_CONFIG_HOME"); err != nil {
 					t.Fatal(err)
 				}
@@ -84,7 +84,17 @@ vim.keymap.set("n", "<leader>mt", ":echo 'fixture timestamp'<CR>")
 			tmuxWrapper := filepath.Join(home, "bin", "tmux")
 			write(tmuxWrapper, "#!/bin/sh\nexec "+quote(tmux)+" -S "+quote(socket)+" -f /dev/null \"$@\"\n", 0700)
 			nvimWrapper := filepath.Join(home, "bin", "nvim")
-			write(nvimWrapper, "#!/bin/sh\nexec "+quote(nvim)+" --noplugin -i NONE \"$@\"\n", 0700)
+			startupArgs := ""
+			if mode == "slow-start" {
+				// The process already appears as nvim to tmux, but early
+				// startup blocks RPC longer than a single request's timeout.
+				startupArgs = " --cmd 'lua vim.uv.sleep(3500)'"
+			} else if mode == "early-rpc" {
+				// Ex sleep handles RPC before configuration is loaded. A
+				// reachable endpoint alone must not count as a ready editor.
+				startupArgs = " --cmd 'sleep 600m'"
+			}
+			write(nvimWrapper, "#!/bin/sh\nexec "+quote(nvim)+" --noplugin -i NONE"+startupArgs+" \"$@\"\n", 0700)
 			n := &Navigator{tmux: tmuxWrapper, nvim: nvimWrapper, home: home}
 			note := Target{ID: "config-fixture", Path: filepath.Join(home, "notes", "meeting.md"), Session: "trailmix-fixture", Window: "meeting"}
 			write(note.Path, "<!-- trailmix: meeting "+note.ID+" -->\n", 0600)

@@ -69,6 +69,14 @@ local ok, err = xpcall(function()
   vim.cmd("TrailMixTranscript")
   assert(#vim.api.nvim_tabpage_list_wins(0) == 2, "reopening duplicated split")
 
+  response(nil, { capture = {
+    state = "failed", error = "No display available", last_captured_seconds = 64,
+    last_captured_at = "2026-11-18T12:01:04Z", tracks = { microphone = { last_captured_seconds = 64 } },
+  } })
+  wait_for(function() return text(transcript):find("Capture error: No display available", 1, true) end, "capture failure did not survive complete transcription")
+  assert(text(transcript):find("Capture: failed · transcription: complete", 1, true) and text(transcript):find("Last observed audio: 01:04", 1, true), "capture and transcription health were conflated")
+  assert(vim.api.nvim_get_current_win() == note_window and text(note) == original, "health refresh changed note or focus")
+
   local live = { meeting_id = id, state = "streaming", tracks = {
     microphone = { state = "streaming", provisional = { item = "Maybe Thursday…" } },
     system = { state = "degraded", error = "fixture disconnect", incomplete_ranges = { { id = "gap", start_seconds = 90, end_seconds = 95 } } },
@@ -290,7 +298,12 @@ local ok, err = xpcall(function()
     if window ~= note_window then transcript_window = window end
   end
   transcript = vim.api.nvim_win_get_buf(transcript_window)
-  wait_for(function() return text(transcript):find("following latest", 1, true) end, "new live transcript did not follow")
+  wait_for(function() return text(transcript):find("Final statement 12", 1, true) end)
+  -- Reopening retains paused reading; G explicitly resumes the live tail.
+  vim.api.nvim_set_current_win(transcript_window)
+  vim.api.nvim_feedkeys("G", "xt", false)
+  vim.api.nvim_set_current_win(note_window)
+  wait_for(function() return text(transcript):find("following latest", 1, true) end, "live transcript did not resume following")
   assert(vim.api.nvim_win_get_cursor(transcript_window)[1] == vim.api.nvim_buf_line_count(transcript))
   passages[#passages + 1] = { id = "newest", meeting_id = id, track = "system", start_seconds = 100, end_seconds = 110, text = "Newest speech" }
   response(passages, { transcription = live })

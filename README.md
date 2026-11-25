@@ -2,7 +2,7 @@
 
 Write the bits that matter.
 
-TrailMix is a CLI-driven meeting-notes tool for Neovim on macOS 15+. It creates a dated Markdown note, starts native capture with hosted transcription, and opens the note through tmux. The Neovim companion inserts timestamps, shows a searchable live transcript, and asks questions through a configurable headless assistant. Answers and cited evidence share the right-hand window.
+TrailMix is a CLI-driven meeting-notes tool for Neovim on macOS 15+. It creates a dated Markdown note, starts native capture with hosted transcription, and opens the note through tmux. The Neovim companion inserts timestamps, shows a searchable live transcript, and asks questions through a configurable headless assistant. The transcript and answers open on the right, with the transcript above answers when both are visible.
 
 TrailMix is early software. Short controlled trials work end to end; long real calls have seen little use. Expect rough edges and file issues.
 
@@ -157,7 +157,9 @@ From a meeting note:
 
 `TrailMixTranscript` opens a read-only vertical split on the right and leaves focus in your notes. It resolves the note's embedded meeting ID, even when a newer recording exists. Repeating the command reuses the split. It also works after stopping capture or reopening Neovim.
 
-In normal mode, `<leader>mT` toggles the current meeting's transcript open or closed, from the note, answer view, or transcript itself. The `T` is uppercase; `<leader>mt` still inserts a timestamp. If the right-hand window is showing answers, the toggle reuses that window for the transcript. `:TrailMixTranscriptToggle` does the same without a mapping. Set `transcript_mapping` in the plugin's `opts` to change or disable the binding.
+Within the same editor tab, closing and reopening transcript or answer views restores their cursor and viewport. A paused transcript stays paused when reopened; press `G` to resume following the latest text.
+
+In normal mode, `<leader>mT` toggles the current meeting's transcript open or closed, from the note, answer view, or transcript itself. The `T` is uppercase; `<leader>mt` still inserts a timestamp. If answers are visible, the transcript opens above them in the right column. Closing either view lets the other fill that column. `:TrailMixTranscriptToggle` does the same without a mapping. Set `transcript_mapping` in the plugin's `opts` to change or disable the binding.
 
 The split shows finalized passages in capture order, with source labels and time ranges. Partial provider text appears in a dimmed `Transcribing…` section. Incomplete ranges and transcription errors remain visible. Refresh failures preserve the previous transcript and display a warning rather than replacing it with an empty result.
 
@@ -177,7 +179,7 @@ The split shows finalized passages in capture order, with source labels and time
 | `<leader>mH` | `:TrailMixNoteJumpBack` | Previous candidate | Same as `<leader>mh` |
 | `<leader>mt` | `:TrailMixAddTimestamp` | Live timestamp while recording | Stamps the passage into the note; in visual mode, also quotes the selection |
 
-`TrailMixNoteJump` works on the passage whose header, text, or trailing blank line holds the cursor. Timestamps in a note need not be in order, so it ranks every valid anchor by its distance in time from the passage start, earlier anchors first on ties, and ignores fenced or malformed ones. It reports the choice, for example `@00:55 · 3s before · 1 of 3`. Repeating it from the note steps to the next-closest anchor and wraps; `TrailMixNoteJumpBack` steps the other way. Moving the cursor off that anchor or editing the note ends the cycle, and the next jump must start from a passage again. The note must be visible in the current tab.
+`TrailMixNoteJump` works on the passage whose header, text, or trailing blank line holds the cursor. Timestamps in a note need not be in order, so it ranks every valid anchor by its distance in time from the passage start, earlier anchors first on ties, and ignores fenced or malformed ones. It reports the choice, for example `@00:55 · 3s before · 1 of 3`. Repeating it from the note steps to the next-closest anchor and wraps; `TrailMixNoteJumpBack` steps the other way. Moving the cursor off that anchor or editing the note ends the cycle, and the next jump must start from a passage again. If the note is not visible in the current tab, the jump opens it in a vertical split to the left of the transcript, reusing any loaded note buffer and its unsaved edits. A note without timestamps still opens and receives focus. The same keybind works in saved `.transcript.md` exports, using the passage header above the cursor. It resolves the note from a loaded buffer, the adjacent note file, or the saved meeting association, and checks the meeting ID before opening it.
 
 From the transcript, `<leader>mt` inserts the passage's start as a timestamp line above the note's cursor and leaves focus in the transcript, so several moments can be stamped in a row. It works after the meeting too, because passages keep their capture times. With a visual selection, the timestamp comes from the first selected passage and the selected transcript text follows as a Markdown quote, one quote paragraph per passage; passage header lines are left out. Each stamp is one undo step in the note. The timestamp locates the passage, not the selected words.
 
@@ -195,12 +197,22 @@ It returns the verified `meeting_id`, `passages`, `transcription` status, and `d
 
 ### Ask about a meeting
 
-In a meeting note:
+From a meeting note or its transcript:
 
-1. Select text in visual mode and press `<leader>ma`. A question prompt opens with the selection prefilled. Edit the question and press Enter. In normal mode, `<leader>ma` opens an empty prompt. `:TrailMixAsk` also works; an Ex range supplies its lines as context.
-2. The answer view opens in the existing right-hand window, or creates one if needed, and shows `Working…`. Your note keeps focus. The request includes the question, selected text, an unsaved note snapshot, and the meeting's finalized transcript passages.
-3. The completed question and answer append to `NAME.answers.md` beside `NAME.md`. The main note is neither saved nor edited by asking. Questions and agenda bullets trigger nothing until you explicitly ask.
-4. Move into the answer window and press `gf` on a time-label citation such as `[12:14]`. Evidence opens in the same window. Backspace or `:TrailMixBack` returns to the answer and its reading position.
+1. Select text in visual mode and press `<leader>ma`. A quote preview appears separately from an empty question prompt. Type your question and press Enter. From the transcript without a selection, the passage under the cursor supplies context. From the note without a selection, the question has no selected text. `:TrailMixAsk` also works; an Ex range supplies its lines as context.
+2. The answer view opens on the right and shows `Working…`. If the transcript is open, answers appear beneath it; otherwise they fill the right column. Focus stays in the note or transcript where you asked, and the selected quote remains visible in the pending answer.
+3. Every request includes the question, selected text, the associated meeting notes, and the meeting's finalized transcript. Loaded notes contribute unsaved edits, even when hidden or in another tab. If the note is not loaded, TrailMix reads its saved file. Other meetings' notes are not included. Transcript selections omit display headers and retain finalized passage IDs; provisional text cannot be used as selected evidence.
+4. The completed question, selected quote, and answer append to `NAME.answers.md` beside `NAME.md`. Selected transcript quotes include links to their source passages. The main note is neither saved nor edited by asking. Questions and agenda bullets trigger nothing until you explicitly ask.
+5. Move into the answer window and press `gf` on a time-label citation such as `[12:14]`. The transcript above the answer jumps to the evidence, opening if needed. Backspace or `:TrailMixBack` returns focus to the answer and its reading position. Both views remain visible.
+
+```text
+Transcript and answers open:      Answers only:
+┌──────────────┬──────────────┐   ┌──────────────┬──────────────┐
+│              │ Transcript   │   │              │              │
+│ Meeting note ├──────────────┤   │ Meeting note │ Answers      │
+│              │ Answers      │   │              │              │
+└──────────────┴──────────────┘   └──────────────┴──────────────┘
+```
 
 ```vim
 :TrailMixAsk
@@ -213,6 +225,8 @@ In a meeting note:
 `TrailMixAnswers` reopens saved answers without running an assistant. Owned `.answers.md` files opened with ordinary `:edit` also receive buffer-local citation and back mappings. `gf` keeps its normal behavior away from a TrailMix citation. `q` closes answer or transcript windows; it does not cancel an active question. Use `TrailMixAskCancel` to cancel. Exiting Neovim cancels pending commands. Closing a view, looking at evidence, or switching notes cannot make a late answer reopen a window or steal focus.
 
 Answer views enable window-local word wrapping, including when reopened or restored after following a citation. This wraps the display without inserting line breaks in the saved Markdown or changing your note window's settings.
+
+Submitting a question scrolls its answer window to the latest content without taking focus. It follows the completed answer when it arrives. Moving the cursor, scrolling, searching, or selecting text in that answer window pauses following so you can read earlier answers. Press `G` there to resume; a counted motion such as `10G` stays paused. Opening saved answers preserves your reading position. The assistant currently returns the completed answer in one update rather than streaming partial text.
 
 Answers are Markdown with links of the form `[12:14](trailmix://meetings/MEETING_ID/passages/PASSAGE_ID)`. The assistant emits passage tokens; TrailMix verifies them against the request's finalized evidence and renders their actual capture times. Unknown references fail without appending an answer. Answers with no transcript citations receive a visible `No transcript evidence cited` note. Valid references establish that evidence exists, not that it supports every claim; review the cited passage. The prompt preserves tentative notes, distinguishes agenda questions from established facts, and labels requested general explanations separately from meeting evidence.
 
@@ -251,7 +265,7 @@ trailmix ask --meeting MEETING_ID --question 'What did we decide about Friday?'
 trailmix answers --meeting MEETING_ID
 ```
 
-Without `--question`, `ask` reads one JSON object on stdin containing `question` and optional `notes`, `note_path`, and `selection`. It returns JSON with the saved answer Markdown and paths. The editor uses this form to include unsaved notes. Each request uses one meeting; cross-meeting search and MCP remain future work.
+Without `--question`, `ask` reads one JSON object on stdin containing `question` and optional `notes`, `note_path`, `selection`, `selection_source`, and `selection_passage_ids`. The selection source is `note` or `transcript`; omitting it treats selected text as note text. Transcript selections require nonempty text and unique finalized passage IDs from the selected meeting. It returns JSON with the saved answer Markdown and paths. The editor uses this form to include unsaved notes. Each request uses one meeting; cross-meeting search and MCP remain future work.
 
 #### Files alongside your notes
 
@@ -467,7 +481,7 @@ A separate navigation regression test loads a fixture `init.lua` through real tm
 
 Transcript checks exercise the real CLI and two fresh isolated Neovim processes against one older meeting while a newer recording exists. Headless editor checks cover asynchronous updates, provisional text, scroll preservation after late finals, timestamp and passage jumps, reverse jumps to out-of-order note timestamps with cycling, stamping and quoting passages into the note, fenced and invalid anchors, normal search/yank, visual selections, moved/duplicated windows, failed reads, timeouts, and polling cleanup. These tests use fixture data and never start capture or contact the transcription provider.
 
-Ask checks cross the actual CLI and a fake headless assistant process. They cover unsaved input snapshots, validated citations, concurrent appends, preservation of source notes and existing files, OpenCode error events, output limits, timeouts, and cleanup of wrapper child processes. Headless Neovim checks exercise selection and prompt behavior, shared-window reuse, named answer files, cancellation, pending-buffer replacement, and citation/back navigation. An editor-to-CLI integration check follows a generated citation back to stored evidence without using a real model.
+Ask checks cross the actual CLI and a fake headless assistant process. They cover unsaved input snapshots, validated citations, concurrent appends, preservation of source notes and existing files, OpenCode error events, output limits, timeouts, and cleanup of wrapper child processes. Headless Neovim checks exercise selection and prompt behavior, separate stacked transcript and answer views, window reuse and reading-position preservation, named answer files, cancellation, pending-buffer replacement, and citation/back navigation. An editor-to-CLI integration check follows a generated citation back to stored evidence without using a real model.
 
 Auth tests use real pseudo-terminals to check hidden input, terminal restoration after success and cancellation, credential replacement, owner-only permissions, redacted status/errors, logout, and XDG fallback paths. Subprocess tests check that detached recording and retry use the same saved credentials from a different working directory. Tests use isolated config directories and do not read your saved key.
 
