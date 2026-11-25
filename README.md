@@ -61,7 +61,7 @@ trailmix stop     # Finalize capture; leave notes and focus alone
 trailmix toggle   # Full start when idle; stop active capture otherwise
 ```
 
-Recordings stop automatically after 3 hours, so a forgotten session cannot run overnight; `status` then shows a warning naming the limit. Low-level `record --max-duration 90m` sets a different limit. Repeated `start` reopens the active meeting. An active low-level recording without notes blocks `start`; `toggle` can still stop it. Capture continues if the editor closes, transcription fails, or navigation fails. A navigation error reports the note path and tmux attach target; retry with `open`, or finish with `stop`. Startup can remain `starting` while macOS asks for permission. Only `recording` confirms capture.
+While recording, TrailMix prevents idle display sleep and idle system sleep so ScreenCaptureKit keeps its display target even when you are not using the keyboard or mouse. Normal sleep settings resume when capture stops or fails. This does not prevent closing the lid, manually putting the Mac to sleep, or guarantee capture survives locking the screen. Recordings stop automatically after 3 hours, so a forgotten session cannot run overnight; `status` then shows a warning naming the limit. Low-level `record --max-duration 90m` sets a different limit. Repeated `start` reopens the active meeting. An active low-level recording without notes blocks `start`; `toggle` can still stop it. Capture continues if the editor closes, transcription fails, or navigation fails. A navigation error reports the note path and tmux attach target; retry with `open`, or finish with `stop`. Startup can remain `starting` while macOS asks for permission. Only `recording` confirms capture.
 
 Notes default to `~/Documents/TrailMix/YYYY-MM-DD/HH-MM-SS.md` in local time. Collisions get a numeric suffix. Each daily `trailmix-YYYY-MM-DD` tmux session has one window per meeting, starting in the daily notes directory. Original dates and paths survive midnight and recorder restart. `open` recreates closed targets and restores the note if its Neovim window switched to another buffer, preserving unsaved text there.
 
@@ -69,14 +69,14 @@ TrailMix prefers the invoking tmux client's best available identity, captured be
 
 ### Recording indicator in tmux
 
-While capture is active, the recorder sets the tmux user option `@trailmix_rec` on the server it was launched from (the default server from an external hotkey) and redraws attached clients. Add this to your status line:
+While capture is active or has failed, the recorder sets the tmux user option `@trailmix_rec` on the server it was launched from (the default server from an external hotkey) and redraws attached clients. Add this to your status line:
 
 ```tmux
 set -g status-right "#{?@trailmix_rec,#(~/.local/bin/trailmix status --tmux) ,}%R "
 set -g status-right-length 60
 ```
 
-`trailmix status --tmux` prints `● HH:MM` with the start time, `○ …` while starting, and a yellow `!txt` when live transcription is degraded. It prints nothing when idle. The command only runs while the option is set. If the recorder dies without clearing the option, the next status-line refresh clears it. The option is harmless if your status line never reads it. Use an absolute path; tmux jobs may not share your shell's PATH.
+`trailmix status --tmux` prints `● HH:MM` with the start time, `○ …` while starting, and a yellow `!txt` when live transcription is degraded. A failed or interrupted capture retains a yellow `!rec` warning after the recorder exits; the last recording's failure remains visible until a new recording replaces it. A normal stop clears the indicator. The command only runs while the option is set. The option is harmless if your status line never reads it. Use an absolute path; tmux jobs may not share your shell's PATH.
 
 macOS also shows its own orange microphone indicator in the menu bar while any app, including TrailMix, uses the microphone.
 
@@ -271,6 +271,8 @@ trailmix transcript --meeting MEETING_ID --export
 
 The main note and transcript sidecar can then be searched together by an external agent. The answers file is created on the first successful answer; subsequent answers append while preserving existing saved text.
 
+Capture health is separate from transcription health. A `complete` transcript means transcription finished for the saved audio, not that the whole conversation was captured. Transcript snapshots and exports include capture failure or interruption warnings and the last observed captured time when available. Wall-clock boundaries use the native audio clock's recorded wall-clock origin, not recorder launch time. Recordings without that origin retain relative audio times but omit wall-clock estimates. The assistant also receives that capture-health context. A missing interval cannot be recovered by retry unless its audio was actually saved. These warnings report known capture failures; they do not add automatic restart, a stalled-audio watchdog, or desktop notifications.
+
 ## Low-level recording
 
 ```sh
@@ -380,7 +382,7 @@ The Neovim companion drives the CLI, and scripts can do the same. Commands with 
 | --- | --- |
 | `status`, `stop`, `record` | Recording status |
 | `start`, `toggle`, `open` | Recording status, or the meeting association when nothing is recording |
-| `transcript --json` | Finalized passages with transcription state (plain text without `--json`) |
+| `transcript --json` | Finalized passages with transcription and capture health (plain text without `--json`) |
 | `retry` | Final transcription state; the helper's repair progress goes to stderr |
 | `ask`, `answers` | The saved answers view |
 | `devices`, `auth status`, `config show` | Microphones, credential presence, or settings |
@@ -455,7 +457,7 @@ go vet ./...
 go mod verify
 ```
 
-CI runs these on macOS 15 for every push and pull request. Pushing a `v*` tag runs `make dist` and publishes the universal tarball and checksum as a GitHub release.
+CI runs these on macOS 15 for pushes to `main` and pull requests. Pushing a `v*` tag runs the same checks before packaging with `make dist` and publishing the universal tarball and checksum as a GitHub release.
 
 Go tests exercise real subprocesses, pipes, and Unix sockets using a fake audio helper. Transcription tests use local WebSocket servers and real PCM queue files. They cover live deltas before commit, out-of-order and duplicate finals, connection-local item IDs, gaps, trailing speech, session rollover including idle periods, cancellation, disconnects, retry deduplication, unpublished PCM, and native queue failures. Recorder tests verify that missing credentials degrade transcription while both local tracks keep recording.
 

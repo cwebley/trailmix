@@ -41,10 +41,13 @@ func newIndicator(listeners ...stateListener) *indicator {
 func (i *indicator) publish(s status) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if s.State == i.last {
+	visible := s
+	visible.Live = true
+	key := s.State + tmuxStatus(visible)
+	if key == i.last {
 		return
 	}
-	i.last = s.State
+	i.last = key
 	select {
 	case <-i.updates: // Drop the stale pending update.
 	default:
@@ -65,7 +68,7 @@ func active(state string) bool {
 	return state == "starting" || state == "recording" || state == "stopping"
 }
 
-// tmuxListener sets the @trailmix_rec user option while capture is active. A
+// tmuxListener sets @trailmix_rec while capture is active or has failed. A
 // status line can show `#{?@trailmix_rec,#(trailmix status --tmux),}`, which
 // costs nothing when idle. The recorder inherits TMUX from its launcher, so
 // this targets the invoking server, or the default server from a hotkey.
@@ -75,7 +78,7 @@ func tmuxListener(ctx context.Context, s status) error {
 		return nil // No tmux, no status line to update.
 	}
 	args := []string{"set-option", "-gu", "@trailmix_rec"}
-	if active(s.State) {
+	if active(s.State) || captureFailed(s) {
 		args = []string{"set-option", "-g", "@trailmix_rec", "1"}
 	}
 	if err := exec.CommandContext(ctx, tmux, args...).Run(); err != nil {
@@ -94,6 +97,9 @@ func tmuxListener(ctx context.Context, s status) error {
 
 // tmuxStatus renders a short tmux-styled label, or nothing when idle.
 func tmuxStatus(s status) string {
+	if captureFailed(s) {
+		return "#[fg=yellow]!rec " + captureHealthFor(s).State + "#[default]"
+	}
 	if !s.Live || !active(s.State) {
 		return ""
 	}
@@ -101,7 +107,13 @@ func tmuxStatus(s status) string {
 		return "#[fg=colour244]○ …#[default]"
 	}
 	label := "#[fg=red]● " + s.StartedAt.Local().Format("15:04")
-	if s.Transcription != nil && s.Transcription.State == "degraded" {
+	for _, warning := range s.Warnings {
+		if strings.HasPrefix(warning, "microphone:") || strings.HasPrefix(warning, "system:") {
+			label += " #[fg=yellow]!audio"
+			break
+		}
+	}
+	if s.Transcription != nil && (s.Transcription.State == "degraded" || s.Transcription.State == "interrupted") {
 		label += " #[fg=yellow]!txt"
 	}
 	return label + "#[default]"

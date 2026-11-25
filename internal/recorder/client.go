@@ -134,9 +134,7 @@ func lastStatus(p paths) (status, error) {
 			return status{}, err
 		}
 	}
-	if s.State == "starting" || s.State == "recording" || s.State == "stopping" {
-		s.State = "interrupted"
-		s.Error = "recorder exited without finalizing; completed local writes remain in the recording directory"
-	}
+	interruptStatus(&s)
+	s.Capture = captureHealthFor(s)
 	return s, nil
 }

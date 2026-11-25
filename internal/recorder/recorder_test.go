@@ -118,11 +118,35 @@ func TestMain(m *testing.M) {
 				_ = os.WriteFile(filepath.Join(output, name+".stream.jsonl"), []byte("{\"offset\":0,\"bytes\":9600,\"start_seconds\":0.1,\"end_seconds\":0.3}\n"), 0600)
 			}
 		}
+		if strings.HasPrefix(mode, "origin-") {
+			for _, kind := range []string{"ready", "started", "progress", "stopped"} {
+				report := map[string]any{"type": kind, "elapsed_seconds": 20}
+				if kind == strings.TrimPrefix(mode, "origin-") {
+					if raw := os.Getenv("TRAILMIX_TEST_ORIGIN"); raw != "" {
+						report["capture_origin_at"] = json.RawMessage(raw)
+					}
+				}
+				if kind == "progress" || kind == "stopped" {
+					report["elapsed_seconds"] = 120
+					report["tracks"] = map[string]track{
+						"microphone": {Frames: 48_000, EndSeconds: 64},
+						"system":     {Frames: 48_000, EndSeconds: 61},
+					}
+				}
+				_ = enc.Encode(report)
+			}
+			os.Exit(0)
+		}
 		_ = enc.Encode(event{Type: "started"})
 		_ = enc.Encode(event{Type: "progress", ElapsedSeconds: 4, Tracks: map[string]track{
 			"microphone": {Frames: 48_000, SampleRate: 48_000, EndSeconds: 4, PeakMax: 0.5},
 			"system":     {Frames: 48_000, SampleRate: 48_000, EndSeconds: 4, PeakMax: 0.5},
 		}})
+		if mode == "capture-error-final" {
+			_ = enc.Encode(event{Type: "error", Error: "No display available"})
+			_ = enc.Encode(event{Type: "stopped", ElapsedSeconds: 5})
+			os.Exit(0)
+		}
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		if mode != "missing-final" {
 			_ = enc.Encode(event{Type: "stopped", ElapsedSeconds: 5})
@@ -257,6 +281,18 @@ func TestNativeFailureIsPersisted(t *testing.T) {
 	s, err := lastStatus(p)
 	if err != nil || s.State != "failed" || s.Error != "Microphone access denied" {
 		t.Fatalf("failure was not retained: %+v, %v", s, err)
+	}
+}
+
+func TestCaptureErrorSurvivesSuccessfulFinalization(t *testing.T) {
+	t.Setenv("TRAILMIX_TEST_HELPER", "capture-error-final")
+	p := testPaths(t)
+	if err := serve(p, "", ""); err == nil || !strings.Contains(err.Error(), "No display available") {
+		t.Fatalf("capture error lost after finalization: %v", err)
+	}
+	s, err := lastStatus(p)
+	if err != nil || s.Capture == nil || s.Capture.State != "failed" || s.Capture.Error != "No display available" || s.Capture.LastCapturedSeconds == nil || *s.Capture.LastCapturedSeconds != 4 || s.ElapsedSeconds != 5 {
+		t.Fatalf("capture error/buffer boundary not retained: %+v %v", s, err)
 	}
 }
 

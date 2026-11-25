@@ -2,12 +2,40 @@ import AVFoundation
 import CoreGraphics
 import CoreMedia
 import Foundation
+import IOKit.pwr_mgt
 import ScreenCaptureKit
 
 struct CaptureError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
     init(_ message: String) { self.message = message }
+}
+
+// Owned by the native recording scope, not the editor or transcription session.
+// macOS also drops these assertions if the helper process exits unexpectedly.
+struct RecordingWakeAssertions {
+    let ids: [IOPMAssertionID]
+
+    init() throws {
+        var acquired: [IOPMAssertionID] = []
+        for type in [kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionTypePreventUserIdleSystemSleep] {
+            var id = IOPMAssertionID(0)
+            let result = IOPMAssertionCreateWithName(
+                type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "TrailMix audio recording" as CFString, &id
+            )
+            guard result == kIOReturnSuccess else {
+                acquired.forEach { _ = IOPMAssertionRelease($0) }
+                throw CaptureError("Cannot prevent idle sleep while recording: IOKit error \(result)")
+            }
+            acquired.append(id)
+        }
+        ids = acquired
+    }
+
+    func release() {
+        ids.forEach { _ = IOPMAssertionRelease($0) }
+    }
 }
 
 func jsonLine(_ value: [String: Any]) throws -> Data {
@@ -322,14 +350,20 @@ final class StreamWriter {
 final class CaptureOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let queue = DispatchQueue(label: "local.trailmix.capture.audio")
     let origin: CMTime
+    let originWallTime: Date
     let system: TrackWriter
     let microphone: TrackWriter
     let stop: AsyncStream<Void>.Continuation
     private var failure: String?
     private var closed = false
 
-    init(directory: URL, stop: AsyncStream<Void>.Continuation, streaming: Bool) throws {
-        self.origin = CMClockGetTime(CMClockGetHostTimeClock())
+    init(directory: URL, stop: AsyncStream<Void>.Continuation, streaming: Bool,
+         origin: CMTime = CMClockGetTime(CMClockGetHostTimeClock()), originWallTime: Date = Date()) throws {
+        // Sample both clocks together, after permission checks and before file
+        // setup or startCapture can delay the first report. Audio stays relative
+        // to the host origin, not Go startup or receipt of a ready event.
+        self.origin = origin
+        self.originWallTime = originWallTime
         self.stop = stop
         system = try TrackWriter(name: "system", directory: directory, streaming: streaming)
         microphone = try TrackWriter(name: "microphone", directory: directory, streaming: streaming)
@@ -339,10 +373,24 @@ final class CaptureOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), origin))
     }
 
+    var originMetadata: [String: Any] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return ["origin_host_seconds": CMTimeGetSeconds(origin),
+                "capture_origin_at": formatter.string(from: originWallTime)]
+    }
+
+    func reportEvent(_ type: String) -> [String: Any] {
+        originMetadata.merging([
+            "type": type, "elapsed_seconds": elapsed,
+            "tracks": ["system": system.stats, "microphone": microphone.stats],
+        ]) { _, value in value }
+    }
+
     func report(_ type: String) {
         guard !closed || type == "stopped" else { return }
-        emit(["type": type, "elapsed_seconds": elapsed,
-              "tracks": ["system": system.stats, "microphone": microphone.stats]])
+        emit(reportEvent(type))
     }
 
     func fail(_ message: String) {
@@ -568,17 +616,23 @@ struct CaptureMain {
         ) { _ in output.fail("Selected microphone disconnected. Reconnect or select another microphone and start a new recording.") }
         defer { NotificationCenter.default.removeObserver(observer) }
         let metadata = try exclusiveFile(directory.appendingPathComponent("capture.json"))
-        try metadata.write(contentsOf: jsonLine([
+        try metadata.write(contentsOf: jsonLine(output.originMetadata.merging([
             "schema_version": 1,
-            "origin_host_seconds": CMTimeGetSeconds(output.origin),
             "microphone_id": selected.uniqueID,
             "microphone_name": selected.localizedName,
             "clock": "SCStream synchronizationClock converted to CMClock host time",
             "system_scope": "all system audio except capture helper",
-        ]))
+        ]) { _, value in value }))
+        try metadata.synchronize()
         try metadata.close()
+        output.queue.sync { output.report("ready") }
         outputLock.withLock { onParentLost = { stops.continuation.yield(()) } }
         defer { outputLock.withLock { onParentLost = nil } }
+        // Acquire before starting ScreenCaptureKit so an idle display cannot
+        // disappear during startup. Release on every return or thrown error,
+        // after finalizing capture, including parent loss and the runtime cap.
+        let wakeAssertions = try RecordingWakeAssertions()
+        defer { wakeAssertions.release() }
         try await stream.startCapture()
         output.queue.sync { output.report("started") }
         let timer = DispatchSource.makeTimerSource(queue: output.queue)
@@ -598,9 +652,59 @@ struct CaptureMain {
     // Real PCM buffers exercise file writing and the file-frame/meeting-time
     // mapping without opening audio devices or requesting permissions.
     static func selfTest() throws {
+        // Exercise real macOS assertions without opening audio devices. Both
+        // normal completion and a thrown capture error must release them.
+        for fail in [false, true] {
+            var ids: [IOPMAssertionID] = []
+            func recordingScope() throws {
+                let assertions = try RecordingWakeAssertions()
+                defer { assertions.release() }
+                ids = assertions.ids
+                guard ids.count == 2, ids.allSatisfy({ IOPMAssertionCopyProperties($0)?.takeRetainedValue() != nil }) else {
+                    throw CaptureError("Recording sleep assertions were not active")
+                }
+                if fail { throw CaptureError("Injected capture failure") }
+            }
+            do {
+                try recordingScope()
+            } catch let error as CaptureError where fail && error.message == "Injected capture failure" {
+                // Expected: cleanup must also run when capture throws.
+            }
+            guard ids.count == 2, ids.allSatisfy({ IOPMAssertionCopyProperties($0)?.takeRetainedValue() == nil }) else {
+                throw CaptureError("Recording sleep assertions leaked")
+            }
+        }
+        emit(["self_test_wake_assertions": "passed"])
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
+        // Inject clocks instead of waiting through permission/startup delays.
+        // All reports and durable metadata must keep the creation-time pair.
+        let originDirectory = directory.appendingPathComponent("origin")
+        try FileManager.default.createDirectory(at: originDirectory, withIntermediateDirectories: false)
+        let originStops = AsyncStream<Void>.makeStream()
+        defer { originStops.continuation.finish() }
+        let originDate = Date(timeIntervalSince1970: 1_795_003_200.125)
+        let originOutput = try CaptureOutput(
+            directory: originDirectory, stop: originStops.continuation, streaming: false,
+            origin: CMTime(seconds: 1000, preferredTimescale: 1000), originWallTime: originDate
+        )
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let expectedOrigin = formatter.string(from: originDate)
+        for value in [originOutput.originMetadata] + ["ready", "started", "progress", "stopped"].map({ originOutput.reportEvent($0) }) {
+            let encoded = try jsonLine(value)
+            let decoded = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+            guard decoded["capture_origin_at"] as? String == expectedOrigin,
+                  decoded["origin_host_seconds"] as? Double == 1000 else {
+                throw CaptureError("Native origin changed across metadata or clock reports")
+            }
+        }
+        guard abs(CMTimeGetSeconds(CMTimeSubtract(CMTime(seconds: 1064, preferredTimescale: 1000), originOutput.origin)) - 64) < 0.000_001 else {
+            throw CaptureError("Capture timestamps no longer use the native origin")
+        }
+        try originOutput.finish()
+        emit(["self_test_capture_origin": "passed"])
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
         let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
         pcm.frameLength = 480

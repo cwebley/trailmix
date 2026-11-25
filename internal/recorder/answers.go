@@ -238,13 +238,14 @@ func questionPrompt(input askInput, snapshot transcriptSnapshot) (string, error)
 		passages = append(passages, evidence{passage.ID, passage.Track, passage.Start, passage.End, passage.Text})
 	}
 	context := struct {
-		Question  string     `json:"question"`
-		Selection string     `json:"selected_note_text,omitempty"`
-		Notes     string     `json:"notes_snapshot"`
-		MeetingID string     `json:"meeting_id"`
-		State     string     `json:"transcription_state"`
-		Passages  []evidence `json:"finalized_passages"`
-	}{input.Question, input.Selection, *input.Notes, snapshot.MeetingID, snapshot.Transcription.State, passages}
+		Question  string         `json:"question"`
+		Selection string         `json:"selected_note_text,omitempty"`
+		Notes     string         `json:"notes_snapshot"`
+		MeetingID string         `json:"meeting_id"`
+		State     string         `json:"transcription_state"`
+		Capture   *captureHealth `json:"capture,omitempty"`
+		Passages  []evidence     `json:"finalized_passages"`
+	}{input.Question, input.Selection, *input.Notes, snapshot.MeetingID, snapshot.Transcription.State, snapshot.Capture, passages}
 	data, err := json.Marshal(context)
 	if err != nil {
 		return "", err
@@ -256,6 +257,9 @@ plan in the notes is not evidence that it was answered or carried out. Preserve 
 Untimestamped notes are untimed. Timestamps are relevance hints, not exclusive evidence ranges.
 Use finalized transcript passages as evidence. Microphone/system are sources, not speaker names.
 Transcription may be incomplete: do not infer that something never happened just because it is absent.
+Capture health is independent of transcription state. Complete transcription only covers saved audio.
+If capture failed or was interrupted, acknowledge missing coverage when relevant to the answer;
+last_captured_seconds is a capture boundary, not evidence that the conversation ended there.
 For every factual claim drawn from the conversation, cite its supporting passage immediately using
 [[passage:EXACT_PASSAGE_ID]]. Use only IDs supplied below. Multiple supporting citations are allowed.
 Do not invent citations, timestamps, links, or source identities. Do not output trailmix:// links;

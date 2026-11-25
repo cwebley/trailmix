@@ -284,6 +284,7 @@ func transcriptCommand(p paths, args []string) error {
 	}
 	passages, state := snapshot.Passages, snapshot.Transcription
 	fmt.Printf("Transcription: %s (%s)\n", state.State, state.Model)
+	fmt.Print(captureSummary(snapshot.Capture))
 	for _, passage := range passages {
 		fmt.Printf("[%.2f–%.2f %s] %s\n  %s\n", passage.Start, passage.End, passage.Track, passage.Text, passage.ID)
 	}
@@ -307,6 +308,13 @@ func statusCommand(p paths, args []string) error {
 	if len(args) == 2 && args[0] == "status" && args[1] == "--tmux" {
 		// Runs from a tmux status line; it must stay fast and never fail loudly.
 		s, err := request(p.socket, "status")
+		if unavailable(err) {
+			s, err = lastStatus(p)
+		}
+		if errors.Is(err, errRecorderTransition) {
+			fmt.Println() // Startup/shutdown is not evidence that the flag is stale.
+			return nil
+		}
 		if err != nil {
 			s = status{}
 		}

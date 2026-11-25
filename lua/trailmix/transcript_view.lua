@@ -20,6 +20,18 @@ function M.validate(snapshot, id)
   assert(type(state) == "table" and state.meeting_id == id and type(state.state) == "string" and type(state.tracks) == "table", "invalid transcription status")
   assert(type(snapshot.passages) == "table" and vim.islist(snapshot.passages), "invalid passages")
   if snapshot.duration_seconds ~= nil then assert(number(snapshot.duration_seconds), "invalid meeting duration") end
+  if snapshot.capture ~= nil then
+    local capture = snapshot.capture
+    assert(type(capture) == "table" and type(capture.state) == "string" and type(capture.tracks) == "table", "invalid capture health")
+    assert(capture.error == nil or type(capture.error) == "string", "invalid capture error")
+    assert(capture.last_captured_seconds == nil or number(capture.last_captured_seconds), "invalid capture boundary")
+    assert(capture.last_captured_at == nil or type(capture.last_captured_at) == "string", "invalid capture time")
+    for name, track in pairs(capture.tracks) do
+      assert((name == "microphone" or name == "system") and type(track) == "table" and number(track.last_captured_seconds), "invalid captured track")
+      assert(track.last_captured_at == nil or type(track.last_captured_at) == "string", "invalid captured track time")
+    end
+    for _, warning in ipairs(capture.warnings or {}) do assert(type(warning) == "string", "invalid capture warning") end
+  end
   local seen = {}
   for _, p in ipairs(snapshot.passages) do
     assert(type(p) == "table" and p.meeting_id == id and type(p.id) == "string" and p.id ~= "" and not seen[p.id], "invalid passage identity")
@@ -53,6 +65,22 @@ function M.render(id, snapshot, following, failure)
   add("title", "Transcript · " .. (state and state.state or (failure and "unavailable" or "loading")) .. " · " .. (following and "following latest" or "paused"), "Title")
   add("meeting", "Meeting " .. id, "Comment")
   add("help", "G: follow latest   q: close   /: search", "Comment")
+  if snapshot and snapshot.capture then
+    local capture = snapshot.capture
+    local unhealthy = capture.state == "failed" or capture.state == "interrupted"
+    add("capture-state", "Capture: " .. capture.state .. " · transcription: " .. state.state, unhealthy and "WarningMsg" or "Comment")
+    if capture.error and capture.error ~= "" then add("capture-error", "Capture error: " .. capture.error, "WarningMsg") end
+    local boundary = capture.last_captured_seconds and M.clock(capture.last_captured_seconds) or "unknown, no buffer telemetry"
+    if capture.last_captured_at then boundary = boundary .. " · approximately " .. capture.last_captured_at end
+    add("capture-boundary", "Last observed audio: " .. boundary, "Comment")
+    for _, name in ipairs({ "microphone", "system" }) do
+      local track = capture.tracks[name]
+      if track then add("capture-track:" .. name, name .. " last observed audio: " .. M.clock(track.last_captured_seconds), "Comment") end
+    end
+    for index, warning in ipairs(capture.warnings or {}) do
+      add("capture-warning:" .. index, "Capture warning: " .. warning, "WarningMsg")
+    end
+  end
   if failure then add("failure", "Refresh failed: " .. failure .. (snapshot and " · showing last snapshot" or ""), "WarningMsg") end
   add("header-gap", "")
   if not snapshot then return result end

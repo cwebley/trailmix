@@ -34,10 +34,11 @@ type track struct {
 }
 
 type event struct {
-	Type           string           `json:"type"`
-	Error          string           `json:"error,omitempty"`
-	ElapsedSeconds float64          `json:"elapsed_seconds"`
-	Tracks         map[string]track `json:"tracks,omitempty"`
+	Type            string           `json:"type"`
+	CaptureOriginAt captureOrigin    `json:"capture_origin_at,omitempty"`
+	Error           string           `json:"error,omitempty"`
+	ElapsedSeconds  float64          `json:"elapsed_seconds"`
+	Tracks          map[string]track `json:"tracks,omitempty"`
 }
 
 type status struct {
@@ -49,12 +50,14 @@ type status struct {
 	Directory       string                `json:"directory,omitempty"`
 	Microphone      string                `json:"microphone,omitempty"`
 	StartedAt       time.Time             `json:"started_at"`
+	CaptureOriginAt captureOrigin         `json:"capture_origin_at,omitempty"`
 	ElapsedSeconds  float64               `json:"elapsed_seconds"`
 	ClockAgeSeconds *float64              `json:"clock_age_seconds,omitempty"`
 	Tracks          map[string]track      `json:"tracks,omitempty"`
 	Error           string                `json:"error,omitempty"`
 	Warnings        []string              `json:"warnings,omitempty"`
 	Transcription   *transcription.Status `json:"transcription,omitempty"`
+	Capture         *captureHealth        `json:"capture,omitempty"`
 }
 
 type paths struct {
@@ -139,6 +142,7 @@ func (s *session) snapshot() status {
 			}
 		}
 	}
+	result.Capture = captureHealthFor(result)
 	return result
 }
 
@@ -254,18 +258,23 @@ func serve(p paths, output, mic string) error {
 	})
 	defer limit.Stop()
 	err = capture(p, s)
-	if s.transcriber != nil {
-		if finishErr := s.transcriber.Finish(); finishErr != nil {
-			s.transcriber.Fail(fmt.Errorf("persist transcription: %w", finishErr))
-		}
-	}
 	s.mu.Lock()
 	if err != nil {
 		s.status.State, s.status.Error = "failed", err.Error()
 	} else {
 		s.status.State = "stopped"
 	}
+	// Freeze capture health before transcription drains. A later transcript or
+	// persistence error must not replace the recording outcome.
+	s.status.Capture = captureHealthFor(s.status)
 	s.mu.Unlock()
+	_ = saveStatus(p, s.snapshot())
+	s.indicator.publish(s.snapshot())
+	if s.transcriber != nil {
+		if finishErr := s.transcriber.Finish(); finishErr != nil {
+			s.transcriber.Fail(fmt.Errorf("persist transcription: %w", finishErr))
+		}
+	}
 	if saveErr := saveStatus(p, s.snapshot()); saveErr != nil {
 		s.mu.Lock()
 		s.status.State, s.status.Error = "failed", fmt.Sprintf("persist final status: %v", saveErr)
@@ -357,6 +366,13 @@ func capture(p paths, s *session) error {
 			break
 		}
 		s.mu.Lock()
+		// Every native clock report carries the association sampled when its
+		// origin was created. Receipt of ready/started can be much later.
+		if e.Type == "ready" || e.Type == "started" || e.Type == "progress" || e.Type == "stopped" {
+			if s.status.CaptureOriginAt == "" {
+				s.status.CaptureOriginAt = e.CaptureOriginAt
+			}
+		}
 		switch e.Type {
 		case "started":
 			s.clockUpdated = time.Now()
@@ -377,10 +393,14 @@ func capture(p paths, s *session) error {
 			}
 		case "progress", "stopped":
 			s.clockUpdated = time.Now()
-			s.status.ElapsedSeconds, s.status.Tracks = e.ElapsedSeconds, e.Tracks
+			s.status.ElapsedSeconds = e.ElapsedSeconds
+			if e.Tracks != nil {
+				s.status.Tracks = e.Tracks
+			}
 			stopped = e.Type == "stopped"
 		case "error":
-			protocolErr = errors.New(e.Error)
+			protocolErr = errors.Join(protocolErr, errors.New(e.Error))
+			s.status.Error = protocolErr.Error()
 		case "transcription_error":
 			if s.transcriber != nil {
 				s.transcriber.Fail(errors.New(e.Error))

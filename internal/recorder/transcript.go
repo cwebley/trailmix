@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/cwebley/trailmix/internal/meeting"
 	"github.com/cwebley/trailmix/internal/transcription"
@@ -18,6 +19,7 @@ type transcriptSnapshot struct {
 	Duration      *float64                `json:"duration_seconds,omitempty"`
 	Passages      []transcription.Passage `json:"passages"`
 	Transcription transcription.Status    `json:"transcription"`
+	Capture       *captureHealth          `json:"capture,omitempty"`
 }
 
 func readTranscript(dir, expectedID string) (transcriptSnapshot, error) {
@@ -65,6 +67,10 @@ func readTranscript(dir, expectedID string) (transcriptSnapshot, error) {
 		return result, errors.New("session meeting identity mismatch")
 	}
 	result.Duration = &session.ElapsedSeconds
+	if active(session.State) && captureWriterGone(dir) {
+		interruptStatus(&session)
+	}
+	result.Capture = captureHealthFor(session)
 	// A final session can retain a persistence error newer than status.json.
 	if session.Transcription != nil && session.Transcription.UpdatedAt.After(state.UpdatedAt) {
 		if session.Transcription.MeetingID != "" && session.Transcription.MeetingID != id {
@@ -77,4 +83,19 @@ func readTranscript(dir, expectedID string) (transcriptSnapshot, error) {
 		result.Transcription.State = "interrupted"
 	}
 	return result, nil
+}
+
+// Native capture holds this lock until finalization. Only infer an interrupted
+// capture when an existing lock is free; older recordings may have no lock.
+func captureWriterGone(dir string) bool {
+	f, err := os.Open(filepath.Join(dir, "capture.lock"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return false
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return true
 }
